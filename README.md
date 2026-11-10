@@ -41,21 +41,14 @@ Claude sends the project, waits for Healer, shows you the result and the diff, a
 
 The Healer tools are a plain MCP server with no dependencies (`mcp/servidor.mjs`, Node 18+), so any agent that speaks MCP over stdio can use them. Connect once with `npx @meiti/healer --for "Your agent" --no-plugin`, then add the server with `npx -y -p @meiti/healer healer-mcp`: it reads the saved key. You can also clone this repository and point your agent to `mcp/servidor.mjs`.
 
-**DeepSeek Harness** (one `@deepseek-ai/dsh-mcp-client` row per MCP server, in your Cordis config):
+**DeepSeek Harness** has its own plugin in [`deepseek-harness/`](deepseek-harness/):
 
-```yaml
-- id: healer
-  name: '@deepseek-ai/dsh-mcp-client'
-  config:
-    transport: stdio
-    serverName: healer
-    command: npx
-    args: ['-y', '-p', '@meiti/healer', 'healer-mcp']
+```
+npx @meiti/healer --for "DeepSeek Harness" --no-plugin
+dsh plugin --profile web add "github:meiti-dev/healer-claude-plugin#path:/deepseek-harness"
 ```
 
-The tools show up as `mcp__healer__healer_revisar`, `mcp__healer__healer_resultado` and `mcp__healer__healer_aplicar`. Ask the agent to send the project to Healer, wait for the result and show you the diff before applying.
-
-This configuration follows the DeepSeek Harness MCP documentation. If your Harness version expects something different, please open an issue.
+Restart DSH and the tools show up as `mcp__healer__healer_revisar`, `mcp__healer__healer_resultado` and `mcp__healer__healer_aplicar`. Ask the agent to send the project to Healer, wait for the result and show you the diff before applying. Tested with DSH 0.2.2-rc.1 on Windows.
 
 ## What this plugin runs, sends and stores
 
