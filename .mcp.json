@@ -4,7 +4,7 @@
       "command": "node",
       "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/servidor.mjs"],
       "env": {
-        "HEALER_API_KEY": "${HEALER_API_KEY}",
+        "HEALER_API_KEY": "${HEALER_API_KEY:-}",
         "HEALER_API_URL": "${HEALER_API_URL:-https://healer-api.meiti.dev}"
       }
     }

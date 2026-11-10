@@ -5,7 +5,7 @@
 //   healer_resultado consulta el trabajo; al terminar guarda la propuesta y devuelve el resumen y el diff.
 //   healer_aplicar   escribe los archivos corregidos SOLO si cada uno sigue igual a como se mandó (base_hashes).
 // Nunca escribe nada sin que se llame healer_aplicar, y el comando /healer le pide a Claude confirmar antes.
-// La clave sale de HEALER_API_KEY (se saca gratis en https://meiti.dev/healer) y nunca se imprime.
+// La clave sale de HEALER_API_KEY o, si no está, de ~/.healer/config.json (lo escribe npx @meiti/healer). Nunca se imprime.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,7 +15,13 @@ import { execFileSync } from 'node:child_process';
 
 const VERSION = '0.1.0';
 const API = (process.env.HEALER_API_URL || 'https://healer-api.meiti.dev').replace(/\/$/, '');
-const CLAVE = process.env.HEALER_API_KEY || '';
+// Se lee en cada llamada, no al arrancar: si la persona conecta Healer con el instalador mientras Claude Code
+// ya está abierto, la próxima llamada ya encuentra la clave, sin reiniciar nada.
+const ARCHIVO_CONFIG = path.join(os.homedir(), '.healer', 'config.json');
+function leerClave() {
+  if (process.env.HEALER_API_KEY) return process.env.HEALER_API_KEY.trim();
+  try { return String(JSON.parse(fs.readFileSync(ARCHIVO_CONFIG, 'utf8')).api_key || '').trim(); } catch { return ''; }
+}
 const ESTADO = path.join(os.tmpdir(), 'healer-claude-code');
 const TOPE_ARCHIVO = 1_000_000;
 const TOPE_TOTAL = 18 * 1024 * 1024;
@@ -61,7 +67,8 @@ const sha256 = (texto) => crypto.createHash('sha256').update(texto, 'utf8').dige
 // ───────────────────────────── API de Healer ─────────────────────────────
 
 async function api(metodo, ruta, cuerpo) {
-  if (!CLAVE) throw new Error('Missing HEALER_API_KEY. Get one for free at https://meiti.dev/healer (panel > API Keys) and set it in your environment before opening Claude Code.');
+  const CLAVE = leerClave();
+  if (!CLAVE) throw new Error('Healer is not connected yet. Run `npx @meiti/healer` in a terminal (it takes a minute and asks you to confirm in the browser), or set HEALER_API_KEY with a key from https://meiti.dev/healer (panel > API Keys).');
   const r = await fetch(API + ruta, { method: metodo, headers: { 'x-api-key': CLAVE, 'content-type': 'application/json', 'user-agent': `healer-claude-code/${VERSION}` }, body: cuerpo ? JSON.stringify(cuerpo) : undefined });
   const datos = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`Healer answered ${r.status}: ${datos.error || 'no detail'}`);

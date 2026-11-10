@@ -12,4 +12,4 @@ Run Healer on the current project.
 5. Ask the user whether to apply the changes. Only if they say yes, call `healer_aplicar`. Never apply without an explicit yes.
 6. If Healer could not fix everything, explain what remains and offer to look into it together.
 
-If the tool says `HEALER_API_KEY` is missing, explain that the user can get a free key at https://meiti.dev/healer (panel, API Keys), set it as an environment variable and restart Claude Code.
+If the tool says Healer is not connected, tell the user to run `npx @meiti/healer` in a terminal (it shows a short code to confirm in the browser) and then try again. Do not ask for or handle the key yourself.
