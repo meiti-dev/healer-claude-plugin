@@ -17,13 +17,14 @@ Either way you get a short code (like `HEAL-7K2Q-ABCD`), confirm it in the brows
 <details><summary>Manual install</summary>
 
 1. Get a free API key at [meiti.dev/healer](https://meiti.dev/healer) (panel, API Keys).
-2. Set it in your environment: `export HEALER_API_KEY=sanador_...`
-3. In Claude Code:
+2. In Claude Code:
 
 ```
 /plugin marketplace add meiti-dev/healer-claude-plugin
 /plugin install healer@meiti
 ```
+
+3. Paste the key when Claude Code asks for it (or later in `/plugin` > healer > Configure) and restart Claude Code.
 
 </details>
 
@@ -56,7 +57,7 @@ Nothing happens until you (or Claude, after you ask) call one of the tools. Then
 
 - **Runs:** `git ls-files` in your project to choose what to send, and `git diff --no-index` on two temporary files to show you each proposed change. No other commands, no hooks, no background process.
 - **Sends:** the project files to the Healer API at `https://healer-api.meiti.dev` (operated by MEITI, the makers of Healer), over HTTPS. Only what git tracks plus new files that are not ignored; binaries and files over 1 MB are skipped. Nothing is sent anywhere else.
-- **Reads your key** from the `HEALER_API_KEY` environment variable or, if it is not set, from `~/.healer/config.json` (written by `npx @meiti/healer`). The key is sent only to the Healer API, as the `x-api-key` header, and is never printed.
+- **Gets your key** only from the plugin's `api_key` option, which Claude Code stores as a sensitive value. `npx @meiti/healer` fills it in for you, or you can paste a key in `/plugin` > healer > Configure. The key is sent only to the Healer API, as the `x-api-key` header, and is never printed. (Outside Claude Code, the same server reads `HEALER_API_KEY` or `~/.healer/config.json`.)
 - **Stores:** a small JSON file per job in your system's temporary folder (`healer-claude-code/`), with the job id, the project path and Healer's proposed files, so the changes can be shown and applied later.
 - **Writes to your project:** only when `healer_aplicar` is called after you say yes, and only files that are still exactly as they were when sent.
 
