@@ -1,0 +1,31 @@
+{
+  "name": "@meiti/healer-dsh",
+  "version": "0.1.0",
+  "description": "Healer for DeepSeek Harness: independent verification and repair for your code. Runs your tests in an isolated sandbox and only returns changes that leave the project better, never worse.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": ["dsh-plugin", "deepseek-harness", "healer", "mcp", "testing", "repair"],
+  "homepage": "https://meiti.dev/healer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/meiti-dev/healer-claude-plugin.git"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
