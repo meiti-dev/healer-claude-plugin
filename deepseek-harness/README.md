@@ -20,6 +20,8 @@ Independent verification for your code, inside DeepSeek Harness. Healer runs you
 
    Use the profile you run (`web`, `tui`, `headless`...).
 
+To remove it: `dsh plugin --profile web remove @meiti/healer-dsh` (it also leaves the profile's bundle list).
+
 ## Use
 
 Ask the agent: "Send this project to Healer, wait for the result and show me the diff before applying." The tools are:

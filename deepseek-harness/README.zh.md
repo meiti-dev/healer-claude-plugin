@@ -20,6 +20,8 @@
 
    请换成你实际使用的 profile（`web`、`tui`、`headless` 等）。
 
+卸载：`dsh plugin --profile web remove @meiti/healer-dsh`（同时会从 profile 的 bundle 列表中移除）。
+
 ## 使用
 
 对 agent 说：“把这个项目发给 Healer，等结果出来，应用之前先给我看 diff。” 可用的工具：
