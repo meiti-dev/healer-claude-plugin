@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 import readline from 'node:readline';
 import { execFileSync } from 'node:child_process';
 
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
 const API = (process.env.HEALER_API_URL || 'https://healer-api.meiti.dev').replace(/\/$/, '');
 const leerClave = () => String(process.env.CLAUDE_PLUGIN_OPTION_API_KEY || '').trim();
 const ESTADO = path.join(os.tmpdir(), 'healer-claude-code');
