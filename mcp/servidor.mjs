@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import readline from 'node:readline';
 import { execFileSync } from 'node:child_process';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const API = (process.env.HEALER_API_URL || 'https://healer-api.meiti.dev').replace(/\/$/, '');
 // Se lee en cada llamada, no al arrancar: si la persona conecta Healer con el instalador mientras Claude Code
 // ya está abierto, la próxima llamada ya encuentra la clave, sin reiniciar nada.

@@ -1,9 +1,20 @@
 {
   "name": "healer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Independent verification for your code: Healer runs your tests in an isolated sandbox, repairs what fails and only gives back changes that leave the project better, never worse.",
-  "author": { "name": "MEITI", "url": "https://meiti.dev/healer" },
+  "author": {
+    "name": "MEITI",
+    "url": "https://meiti.dev/healer"
+  },
   "homepage": "https://meiti.dev/healer",
   "license": "MIT",
-  "keywords": ["testing", "repair", "verification", "ci", "sandbox"]
+  "keywords": [
+    "testing",
+    "repair",
+    "verification",
+    "ci",
+    "sandbox"
+  ],
+  "icon": ".claude-plugin/icon.png",
+  "repository": "https://github.com/meiti-dev/healer-claude-plugin"
 }

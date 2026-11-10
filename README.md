@@ -57,9 +57,17 @@ The tools show up as `mcp__healer__healer_revisar`, `mcp__healer__healer_resulta
 
 This configuration follows the DeepSeek Harness MCP documentation. If your Harness version expects something different, please open an issue.
 
-## What gets sent
+## What this plugin runs, sends and stores
 
-Only what git tracks plus new files that are not ignored. Binaries and files over 1 MB are skipped.
+Nothing happens until you (or Claude, after you ask) call one of the tools. Then:
+
+- **Runs:** `git ls-files` in your project to choose what to send, and `git diff --no-index` on two temporary files to show you each proposed change. No other commands, no hooks, no background process.
+- **Sends:** the project files to the Healer API at `https://healer-api.meiti.dev` (operated by MEITI, the makers of Healer), over HTTPS. Only what git tracks plus new files that are not ignored; binaries and files over 1 MB are skipped. Nothing is sent anywhere else.
+- **Reads your key** from the `HEALER_API_KEY` environment variable or, if it is not set, from `~/.healer/config.json` (written by `npx @meiti/healer`). The key is sent only to the Healer API, as the `x-api-key` header, and is never printed.
+- **Stores:** a small JSON file per job in your system's temporary folder (`healer-claude-code/`), with the job id, the project path and Healer's proposed files, so the changes can be shown and applied later.
+- **Writes to your project:** only when `healer_aplicar` is called after you say yes, and only files that are still exactly as they were when sent.
+
+Healer runs your tests in an isolated sandbox on its servers. See [meiti.dev/healer](https://meiti.dev/healer) for its terms.
 
 **Free level and your code:** the free level repairs with free AI providers (Groq, NVIDIA and Gemini). The repaired code may be reused to train Healer's models, and those providers may keep and use what they receive to improve theirs. On the pro level none of your code is used for training. For private code, use pro.
 

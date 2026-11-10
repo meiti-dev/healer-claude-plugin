@@ -1,11 +1,16 @@
 {
   "name": "meiti",
-  "owner": { "name": "MEITI", "url": "https://meiti.dev" },
+  "owner": {
+    "name": "MEITI",
+    "url": "https://meiti.dev"
+  },
   "plugins": [
     {
       "name": "healer",
       "source": "./",
-      "description": "Independent verification for your code: tests in an isolated sandbox, repairs that never make it worse."
+      "description": "Independent verification for your code: tests in an isolated sandbox, repairs that never make it worse.",
+      "version": "0.2.0"
     }
-  ]
+  ],
+  "description": "Healer by MEITI: independent verification and repair for your code."
 }
