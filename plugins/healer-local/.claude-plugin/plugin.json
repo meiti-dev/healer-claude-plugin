@@ -1,0 +1,28 @@
+{
+  "name": "healer-local",
+  "version": "0.3.3",
+  "description": "Healer with a local MCP server (for the terminal): reads the project and writes the fixes itself. Same Healer as the healer plugin, which uses the remote server.",
+  "author": {
+    "name": "MEITI",
+    "url": "https://meiti.dev/healer"
+  },
+  "homepage": "https://meiti.dev/healer",
+  "license": "MIT",
+  "keywords": [
+    "testing",
+    "repair",
+    "verification",
+    "ci",
+    "sandbox"
+  ],
+  "repository": "https://github.com/meiti-dev/healer-claude-plugin",
+  "userConfig": {
+    "api_key": {
+      "type": "string",
+      "title": "Healer API key",
+      "description": "Your Healer API key. npx @meiti/healer fills it in for you, or create one at meiti.dev/healer (panel, API Keys).",
+      "sensitive": true,
+      "required": false
+    }
+  }
+}

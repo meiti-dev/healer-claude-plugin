@@ -1,6 +1,6 @@
 {
   "name": "healer",
-  "version": "0.3.3",
+  "version": "1.0.0",
   "description": "Independent verification for your code: Healer runs your tests in an isolated sandbox, repairs what fails and only gives back changes that leave the project better, never worse.",
   "author": {
     "name": "MEITI",
@@ -21,9 +21,10 @@
     "api_key": {
       "type": "string",
       "title": "Healer API key",
-      "description": "Your Healer API key. npx @meiti/healer fills it in for you, or create one at meiti.dev/healer (panel, API Keys).",
+      "description": "Your Healer API key (sent only to the Healer server as the x-api-key header). npx @meiti/healer fills it in for you, or create one at meiti.dev/healer (panel, API Keys).",
       "sensitive": true,
       "required": false
     }
-  }
+  },
+  "privacyPolicyUrl": "https://meiti.dev/healer/privacy.html"
 }

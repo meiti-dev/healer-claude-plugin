@@ -1,6 +1,16 @@
 # Healer for Claude Code
 
-Independent verification for your code, without leaving Claude Code. Healer runs your tests in an isolated sandbox, repairs what fails and only gives back changes that leave the project better, never worse.
+Independent verification for your code, without leaving Claude Code. Healer runs your tests in an isolated sandbox, repairs what fails and only gives back changes that leave the project better, never worse. It is a second opinion from a different team of models.
+
+This plugin connects Claude Code to the Healer server (a remote MCP server at `https://healer-api.meiti.dev/mcp`). It installs no programs on your computer.
+
+## What is in this repository
+
+| Folder | What it is |
+|---|---|
+| [`plugins/healer`](plugins/healer) | The Claude Code plugin (also in the Claude plugin directory). Connects to the remote Healer server; installs no programs on your computer. |
+| [`plugins/healer-local`](plugins/healer-local) | The same Healer with a local MCP server, for terminal users who prefer it. |
+| [`healer-dsh-plugin`](https://github.com/meiti-dev/healer-dsh-plugin) | The DeepSeek Harness plugin. |
 
 ## Install
 
@@ -12,12 +22,12 @@ npx @meiti/healer
 
 **or tell your agent:** "Install Healer: meiti.dev/healer/install.txt"
 
-Either way you get a short code (like `HEAL-7K2Q-ABCD`), confirm it in the browser with one click, and you are done: no keys to copy or paste. The installer saves the key in `~/.healer/config.json` and installs this plugin in Claude Code. Confirming the code is always your step: no agent can connect your account on its own.
+Either way you get a short code (like `HEAL-7K2Q-ABCD`), confirm it in the browser with one click, and you are done: no keys to copy or paste. Confirming the code is always your step: no agent can connect your account on its own.
 
 <details><summary>Manual install</summary>
 
 1. Get a free API key at [meiti.dev/healer](https://meiti.dev/healer) (panel, API Keys).
-2. In Claude Code:
+2. Install the plugin from the Claude plugin directory, or in Claude Code:
 
 ```
 /plugin marketplace add meiti-dev/healer-claude-plugin
@@ -36,39 +46,28 @@ Either way you get a short code (like `HEAL-7K2Q-ABCD`), confirm it in the brows
 /healer tests/test_api.py::test_login   # only these tests define "fixed"
 ```
 
-Claude sends the project, waits for Healer, shows you the result and the diff, and asks before writing anything.
+Claude uploads the project, waits for Healer, shows you the result and the diff, and asks before writing anything. Without a terminal (claude.ai, mobile), Claude can review a GitHub repository through your Healer organization's GitHub connection instead.
 
-## Other agents (DeepSeek Harness, Cursor, any MCP client)
-
-The Healer tools are a plain MCP server with no dependencies (Node 18+), so any agent that speaks MCP over stdio can use them. Connect once with `npx @meiti/healer --for "Your agent" --no-plugin`, then add the server with `npx -y -p @meiti/healer healer-mcp`: it reads the saved key.
-
-**DeepSeek Harness** has its own plugin in [`deepseek-harness/`](https://github.com/meiti-dev/healer-claude-plugin/tree/main/deepseek-harness):
-
-```
-npx @meiti/healer --for "DeepSeek Harness" --no-plugin
-dsh plugin --profile web add "github:meiti-dev/healer-claude-plugin#path:/deepseek-harness"
-```
-
-Restart DSH and the tools show up as `mcp__healer__healer_revisar`, `mcp__healer__healer_resultado` and `mcp__healer__healer_aplicar`. Ask the agent to send the project to Healer, wait for the result and show you the diff before applying. Tested with DSH 0.2.2-rc.1 on Windows.
-
-## What this plugin runs, sends and stores
-
-Nothing happens until you (or Claude, after you ask) call one of the tools. Then:
-
-- **Runs:** nothing. It starts no programs, has no hooks and no background process. It reads your project's `.gitignore` files itself to choose what to send, and builds the diffs itself.
-- **Sends:** the project files to the Healer API at `https://healer-api.meiti.dev` (operated by MEITI, the makers of Healer), over HTTPS. The same files git would send (it honors every `.gitignore`); binaries, files over 1 MB and secret files (`.env`, `*.pem`, `*.key`, `id_rsa` and similar) are always skipped. Nothing is sent anywhere else.
-- **Gets your key** only from the plugin's `api_key` option, which Claude Code stores as a sensitive value. `npx @meiti/healer` fills it in for you, or you can paste a key in `/plugin` > healer > Configure. The key is sent only to the Healer API, as the `x-api-key` header, and is never printed. (Outside Claude Code, the same server reads `HEALER_API_KEY` or `~/.healer/config.json`.)
-- **Stores:** a small JSON file per job in your system's temporary folder (`healer-claude-code/`), with the job id, the project path and Healer's proposed files, so the changes can be shown and applied later.
-- **Writes to your project:** only when `healer_aplicar` is called after you say yes, and only files that are still exactly as they were when sent.
-
-Healer runs your tests in an isolated sandbox on its servers. See [meiti.dev/healer](https://meiti.dev/healer) for its terms.
-
-**Free level and your code:** the free level repairs with free AI providers (Groq, NVIDIA and Gemini). The repaired code may be reused to train Healer's models, and those providers may keep and use what they receive to improve theirs. On the pro level none of your code is used for training. For private code, use pro.
-
-## Tools
+## How it works
 
 | Tool | What it does |
 |---|---|
-| `healer_revisar` | Sends the project and returns a job id |
-| `healer_resultado` | Checks the job; when it finishes, returns the summary and the diff |
-| `healer_aplicar` | Writes the changes, only if each file is still the same as when it was sent |
+| `healer_preparar_envio` | Returns a one-time upload link (15 minutes) and the command to upload the project from its folder |
+| `healer_revisar_repo` | Reviews a GitHub repository, with your Healer organization's GitHub connection |
+| `healer_resultado` | Checks the job; when it finishes, returns the summary, the diff and a signed link to the patch |
+| `healer_aplicar_en_github` | Commits the changes to the reviewed branch, only if those files did not change since the review |
+
+## What runs, what is sent and what is stored
+
+- **On your computer, the plugin runs nothing.** It has no programs, no hooks and no background process. Claude runs two commands, each one with your permission: the upload (`git ls-files` or `tar`, then `curl` to the one-time link) and, only after you say yes, `git apply` with Healer's patch. `git apply` refuses any file that changed since it was sent.
+- **Sent:** the project files, over HTTPS, to the Healer server at `healer-api.meiti.dev` (operated by MEITI, the makers of Healer). With git, only tracked files plus new files that are not ignored. On arrival Healer drops anything in a `.gitignore`, secret files (`.env`, `*.pem`, `*.key`, `id_rsa` and similar), binaries and files over 1 MB; those are not stored. Nothing is sent anywhere else.
+- **Your key** is stored by Claude Code as the plugin's sensitive `api_key` option and is sent only to the Healer server, as the `x-api-key` header.
+- **Stored by Healer:** the uploaded files, for 7 days, so the patch can be built; then they are deleted. The job result (including the repaired files) stays in your account's history so you can review it in the panel.
+
+**Free level and your code:** the free level repairs with free AI providers (Groq, NVIDIA and Gemini). The repaired code may be reused to train Healer's models, and those providers may keep and use what they receive to improve theirs. On the pro level none of your code is used for training. For private code, use pro.
+
+## Other agents
+
+The same Healer server works with any agent that supports remote MCP servers: point it to `https://healer-api.meiti.dev/mcp` with your key in the `x-api-key` header (or `Authorization: Bearer`). For terminal agents that prefer a local server, see [`plugins/healer-local`](https://github.com/meiti-dev/healer-claude-plugin/tree/main/plugins/healer-local) and the [DeepSeek Harness plugin](https://github.com/meiti-dev/healer-dsh-plugin).
+
+Privacy: [meiti.dev/healer/privacy.html](https://meiti.dev/healer/privacy.html). MIT license.

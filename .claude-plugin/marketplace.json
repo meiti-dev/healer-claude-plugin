@@ -8,7 +8,13 @@
     {
       "name": "healer",
       "source": "./plugins/healer",
-      "description": "Independent verification for your code: tests in an isolated sandbox, repairs that never make it worse.",
+      "description": "Independent verification for your code through the Healer server: tests in an isolated sandbox, repairs that never make it worse.",
+      "version": "1.0.0"
+    },
+    {
+      "name": "healer-local",
+      "source": "./plugins/healer-local",
+      "description": "The same Healer with a local MCP server, for the terminal: reads the project and writes the fixes itself.",
       "version": "0.3.3"
     }
   ],

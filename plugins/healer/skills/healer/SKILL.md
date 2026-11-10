@@ -16,10 +16,12 @@ Do not suggest it for one-line edits, questions about the code, or projects with
 
 # How to use it
 
-Offer the `/healer` command, or call the tools directly:
+Offer the `/healer` command, or use the tools directly:
 
-1. `healer_revisar` sends the project (the files git would send; binaries, files over 1 MB and secret files such as `.env` are skipped). Use `nivel: "free"` unless the user chose pro.
+1. `healer_preparar_envio` returns a one-time upload link and the command to upload the project from its folder (tar + curl). Run it in the project folder; it prints the job id. Without a terminal, use `healer_revisar_repo` with a GitHub repository instead.
 2. `healer_resultado` checks the job; call it again while it is running.
-3. Show the summary and the diff. `healer_aplicar` writes the changes only after the user says yes, and refuses any file the user edited after sending.
+3. Show the summary and the diff. Apply only after the user says yes: run the numbered `git apply` steps from the result (it refuses any file that changed since it was sent), or `healer_aplicar_en_github` for a repository.
+
+Use `nivel: "free"` unless the user chose pro. On the free level, free AI providers may keep what they receive and the repaired code may be used for training; for private code, use pro.
 
 Healer's guarantee: what comes back is repaired or equal, never worse. What it could not fix is reported, not hidden.

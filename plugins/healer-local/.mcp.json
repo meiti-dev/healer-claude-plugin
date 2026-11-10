@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "healer": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/mcp/servidor.mjs"
+      ],
+      "env": {
+        "CLAUDE_PLUGIN_OPTION_API_KEY": "${user_config.api_key}"
+      }
+    }
+  }
+}
