@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 🩺 Healer para Claude Code (2026-11-09): servidor MCP sin dependencias (solo Node 18+), por stdio, JSON-RPC 2.0.
 // Tres herramientas sobre la API pública de Healer (las mismas de la GitHub Action y del SDK):
-//   healer_revisar   arma el proyecto (lo que git versiona, o los archivos de texto si no hay git) y lo manda a reparar.
+//   healer_revisar   arma el proyecto (lo que git mandaría según los .gitignore, nunca archivos de secretos) y lo manda a reparar.
 //   healer_resultado consulta el trabajo; al terminar guarda la propuesta y devuelve el resumen y el diff.
 //   healer_aplicar   escribe los archivos corregidos SOLO si cada uno sigue igual a como se mandó (base_hashes).
 // Nunca escribe nada sin que se llame healer_aplicar, y el comando /healer le pide a Claude confirmar antes.
@@ -13,9 +13,8 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import readline from 'node:readline';
-import { execFileSync } from 'node:child_process';
 
-const VERSION = '0.3.2';
+const VERSION = '0.3.3';
 const API = (process.env.HEALER_API_URL || 'https://healer-api.meiti.dev').replace(/\/$/, '');
 const leerClave = () => String(process.env.CLAUDE_PLUGIN_OPTION_API_KEY || '').trim();
 const ESTADO = path.join(os.tmpdir(), 'healer-claude-code');
@@ -25,23 +24,67 @@ const IGNORAR = new Set(['.git', 'node_modules', '.venv', 'venv', 'dist', 'build
 
 // ───────────────────────────── Proyecto ─────────────────────────────
 
-function archivosDelProyecto(raiz) {
-  let rutas;
-  try {
-    // Lo que git versiona más lo nuevo sin ignorar: respeta el .gitignore del proyecto.
-    rutas = execFileSync('git', ['-C', raiz, 'ls-files', '-co', '--exclude-standard'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
-      .split('\n').filter(Boolean);
-  } catch {
-    rutas = [];
-    const recorrer = (dir) => {
-      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-        if (IGNORAR.has(e.name) || e.isSymbolicLink()) continue;
-        const p = path.join(dir, e.name);
-        if (e.isDirectory()) recorrer(p); else if (e.isFile()) rutas.push(path.relative(raiz, p).split(path.sep).join('/'));
-      }
-    };
-    recorrer(raiz);
+// Archivos de secretos: nunca salen de la máquina, aunque el proyecto se haya olvidado de ignorarlos.
+const SECRETO = /^(\.env(\..+)?|.*\.(pem|key|p12|pfx|keystore|jks)|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.npmrc|\.pypirc|\.netrc|credentials(\.json)?)$/i;
+const PLANTILLA_ENV = /^\.env\.(example|sample|template|dist)$/i;
+
+// Una línea de .gitignore → expresión regular sobre la ruta relativa a la carpeta del .gitignore. Cubre lo que se usa en
+// la práctica: comentarios, "!" para volver a incluir, "/" final (solo carpetas), "/" inicial o en el medio (anclado),
+// *, ?, ** y [clases]. Antes esto lo hacía `git ls-files`; se hace acá para que el plugin no ejecute ningún programa.
+function reglaGitignore(linea) {
+  let l = linea.replace(/\r$/, '');
+  if (!l.trim() || l.startsWith('#')) return null;
+  l = l.replace(/(?<!\\)\s+$/, '');
+  const negada = l.startsWith('!');
+  if (negada) l = l.slice(1);
+  l = l.replace(/^\\([#!])/, '$1');
+  const soloCarpeta = l.endsWith('/');
+  if (soloCarpeta) l = l.slice(0, -1);
+  const anclada = l.includes('/');
+  if (l.startsWith('/')) l = l.slice(1);
+  let re = '';
+  for (let i = 0; i < l.length; i++) {
+    const c = l[i];
+    if (c === '*' && l[i + 1] === '*') {
+      if (l[i + 2] === '/') { re += '(?:.*/)?'; i += 2; } else { re += '.*'; i += 1; }
+    } else if (c === '*') re += '[^/]*';
+    else if (c === '?') re += '[^/]';
+    else if (c === '[') { const fin = l.indexOf(']', i + 1); if (fin > i) { re += '[' + l.slice(i + 1, fin).replace(/^!/, '^').replace(/\\/g, '\\\\') + ']'; i = fin; } else re += '\\['; }
+    else if (c === '\\' && i + 1 < l.length) { re += l[i + 1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); i++; }
+    else re += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
+  return { negada, soloCarpeta, re: new RegExp(anclada ? `^${re}$` : `(?:^|/)${re}$`) };
+}
+
+function leerReglas(archivo, base) {
+  try { return fs.readFileSync(archivo, 'utf8').split('\n').map(reglaGitignore).filter(Boolean).map((r) => ({ ...r, base })); } catch { return []; }
+}
+
+// Gana la última regla que coincide, como en git. `rel` es la ruta relativa a la raíz del proyecto.
+function ignorado(rel, esCarpeta, reglas) {
+  let resultado = false;
+  for (const r of reglas) {
+    if (r.soloCarpeta && !esCarpeta) continue;
+    const local = r.base ? (rel.startsWith(r.base + '/') ? rel.slice(r.base.length + 1) : null) : rel;
+    if (local !== null && r.re.test(local)) resultado = !r.negada;
+  }
+  return resultado;
+}
+
+function archivosDelProyecto(raiz) {
+  // Lo que git mandaría: respeta los .gitignore del proyecto (en cada carpeta) y .git/info/exclude.
+  const rutas = [];
+  const recorrer = (dir, rel, reglas) => {
+    const propias = [...reglas, ...leerReglas(path.join(dir, '.gitignore'), rel)];
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (IGNORAR.has(e.name) || e.isSymbolicLink()) continue;
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (ignorado(r, e.isDirectory(), propias)) continue;
+      if (e.isDirectory()) recorrer(path.join(dir, e.name), r, propias);
+      else if (e.isFile() && (!SECRETO.test(e.name) || PLANTILLA_ENV.test(e.name))) rutas.push(r);
+    }
+  };
+  recorrer(raiz, '', leerReglas(path.join(raiz, '.git', 'info', 'exclude'), ''));
   const files = {};
   let total = 0;
   let omitidos = 0;

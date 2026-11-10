@@ -18,7 +18,7 @@ Do not suggest it for one-line edits, questions about the code, or projects with
 
 Offer the `/healer` command, or call the tools directly:
 
-1. `healer_revisar` sends the project (only what git tracks, plus new files that are not ignored; binaries and files over 1 MB are skipped). Use `nivel: "free"` unless the user chose pro.
+1. `healer_revisar` sends the project (the files git would send; binaries, files over 1 MB and secret files such as `.env` are skipped). Use `nivel: "free"` unless the user chose pro.
 2. `healer_resultado` checks the job; call it again while it is running.
 3. Show the summary and the diff. `healer_aplicar` writes the changes only after the user says yes, and refuses any file the user edited after sending.
 

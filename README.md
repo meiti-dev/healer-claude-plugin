@@ -55,8 +55,8 @@ Restart DSH and the tools show up as `mcp__healer__healer_revisar`, `mcp__healer
 
 Nothing happens until you (or Claude, after you ask) call one of the tools. Then:
 
-- **Runs:** `git ls-files` in your project to choose what to send, and `git diff --no-index` on two temporary files to show you each proposed change. No other commands, no hooks, no background process.
-- **Sends:** the project files to the Healer API at `https://healer-api.meiti.dev` (operated by MEITI, the makers of Healer), over HTTPS. Only what git tracks plus new files that are not ignored; binaries and files over 1 MB are skipped. Nothing is sent anywhere else.
+- **Runs:** nothing. It starts no programs, has no hooks and no background process. It reads your project's `.gitignore` files itself to choose what to send, and builds the diffs itself.
+- **Sends:** the project files to the Healer API at `https://healer-api.meiti.dev` (operated by MEITI, the makers of Healer), over HTTPS. The same files git would send (it honors every `.gitignore`); binaries, files over 1 MB and secret files (`.env`, `*.pem`, `*.key`, `id_rsa` and similar) are always skipped. Nothing is sent anywhere else.
 - **Gets your key** only from the plugin's `api_key` option, which Claude Code stores as a sensitive value. `npx @meiti/healer` fills it in for you, or you can paste a key in `/plugin` > healer > Configure. The key is sent only to the Healer API, as the `x-api-key` header, and is never printed. (Outside Claude Code, the same server reads `HEALER_API_KEY` or `~/.healer/config.json`.)
 - **Stores:** a small JSON file per job in your system's temporary folder (`healer-claude-code/`), with the job id, the project path and Healer's proposed files, so the changes can be shown and applied later.
 - **Writes to your project:** only when `healer_aplicar` is called after you say yes, and only files that are still exactly as they were when sent.
