@@ -40,9 +40,9 @@ Claude sends the project, waits for Healer, shows you the result and the diff, a
 
 ## Other agents (DeepSeek Harness, Cursor, any MCP client)
 
-The Healer tools are a plain MCP server with no dependencies (`mcp/servidor.mjs`, Node 18+), so any agent that speaks MCP over stdio can use them. Connect once with `npx @meiti/healer --for "Your agent" --no-plugin`, then add the server with `npx -y -p @meiti/healer healer-mcp`: it reads the saved key. You can also clone this repository and point your agent to `mcp/servidor.mjs`.
+The Healer tools are a plain MCP server with no dependencies (Node 18+), so any agent that speaks MCP over stdio can use them. Connect once with `npx @meiti/healer --for "Your agent" --no-plugin`, then add the server with `npx -y -p @meiti/healer healer-mcp`: it reads the saved key.
 
-**DeepSeek Harness** has its own plugin in [`deepseek-harness/`](deepseek-harness/):
+**DeepSeek Harness** has its own plugin in [`deepseek-harness/`](https://github.com/meiti-dev/healer-claude-plugin/tree/main/deepseek-harness):
 
 ```
 npx @meiti/healer --for "DeepSeek Harness" --no-plugin

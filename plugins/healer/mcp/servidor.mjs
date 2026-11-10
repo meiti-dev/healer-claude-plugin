@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 import readline from 'node:readline';
 import { execFileSync } from 'node:child_process';
 
-const VERSION = '0.3.1';
+const VERSION = '0.3.2';
 const API = (process.env.HEALER_API_URL || 'https://healer-api.meiti.dev').replace(/\/$/, '');
 const leerClave = () => String(process.env.CLAUDE_PLUGIN_OPTION_API_KEY || '').trim();
 const ESTADO = path.join(os.tmpdir(), 'healer-claude-code');
@@ -65,7 +65,7 @@ const sha256 = (texto) => crypto.createHash('sha256').update(texto, 'utf8').dige
 async function api(metodo, ruta, cuerpo) {
   const CLAVE = leerClave();
   if (!CLAVE) {
-    throw new Error('Healer is not connected yet. Run the Healer installer (instructions at https://meiti.dev/healer/install.txt). In Claude Code you can also paste an API key from https://meiti.dev/healer in /plugin > healer > Configure, then restart Claude Code.');
+    throw new Error('Healer is not connected yet. To connect it, see meiti.dev/healer. In Claude Code you can also paste an API key in /plugin > healer > Configure and restart Claude Code.');
   }
   const r = await fetch(API + ruta, { method: metodo, headers: { 'x-api-key': CLAVE, 'content-type': 'application/json', 'user-agent': `healer-claude-code/${VERSION}` }, body: cuerpo ? JSON.stringify(cuerpo) : undefined });
   const datos = await r.json().catch(() => ({}));
