@@ -5,8 +5,8 @@
 //   healer_resultado consulta el trabajo; al terminar guarda la propuesta y devuelve el resumen y el diff.
 //   healer_aplicar   escribe los archivos corregidos SOLO si cada uno sigue igual a como se mandó (base_hashes).
 // Nunca escribe nada sin que se llame healer_aplicar, y el comando /healer le pide a Claude confirmar antes.
-// Como plugin de Claude Code la clave llega SOLO por la opción sensible del plugin (CLAUDE_PLUGIN_OPTION_API_KEY, la guarda el
-// instalador de Healer). Fuera de Claude (DeepSeek Harness y otros agentes MCP) sale de HEALER_API_KEY o de ~/.healer/config.json.
+// La clave llega SOLO por CLAUDE_PLUGIN_OPTION_API_KEY: en Claude Code es la opción sensible del plugin (la guarda el
+// instalador de Healer); para otros agentes la pone healer-mcp.mjs del paquete npm, que vive fuera de este plugin.
 // Nunca se imprime.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -17,15 +17,7 @@ import { execFileSync } from 'node:child_process';
 
 const VERSION = '0.3.0';
 const API = (process.env.HEALER_API_URL || 'https://healer-api.meiti.dev').replace(/\/$/, '');
-// Se lee en cada llamada, no al arrancar: si la persona conecta Healer con el instalador mientras Claude Code
-// ya está abierto, la próxima llamada ya encuentra la clave, sin reiniciar nada.
-const ARCHIVO_CONFIG = path.join(os.homedir(), '.healer', 'config.json');
-const COMO_PLUGIN = 'CLAUDE_PLUGIN_OPTION_API_KEY' in process.env;
-function leerClave() {
-  if (COMO_PLUGIN) return String(process.env.CLAUDE_PLUGIN_OPTION_API_KEY || '').trim();
-  if (process.env.HEALER_API_KEY) return process.env.HEALER_API_KEY.trim();
-  try { return String(JSON.parse(fs.readFileSync(ARCHIVO_CONFIG, 'utf8')).api_key || '').trim(); } catch { return ''; }
-}
+const leerClave = () => String(process.env.CLAUDE_PLUGIN_OPTION_API_KEY || '').trim();
 const ESTADO = path.join(os.tmpdir(), 'healer-claude-code');
 const TOPE_ARCHIVO = 1_000_000;
 const TOPE_TOTAL = 18 * 1024 * 1024;
@@ -73,9 +65,7 @@ const sha256 = (texto) => crypto.createHash('sha256').update(texto, 'utf8').dige
 async function api(metodo, ruta, cuerpo) {
   const CLAVE = leerClave();
   if (!CLAVE) {
-    throw new Error(COMO_PLUGIN
-      ? 'Healer is not connected yet. Run the Healer installer (instructions at https://meiti.dev/healer/install.txt), or paste an API key from https://meiti.dev/healer in /plugin > healer > Configure. Then restart Claude Code.'
-      : 'Healer is not connected yet. Run the Healer installer (instructions at https://meiti.dev/healer/install.txt), or set HEALER_API_KEY with a key from https://meiti.dev/healer (panel > API Keys).');
+    throw new Error('Healer is not connected yet. Run the Healer installer (instructions at https://meiti.dev/healer/install.txt). In Claude Code you can also paste an API key from https://meiti.dev/healer in /plugin > healer > Configure, then restart Claude Code.');
   }
   const r = await fetch(API + ruta, { method: metodo, headers: { 'x-api-key': CLAVE, 'content-type': 'application/json', 'user-agent': `healer-claude-code/${VERSION}` }, body: cuerpo ? JSON.stringify(cuerpo) : undefined });
   const datos = await r.json().catch(() => ({}));
@@ -143,25 +133,48 @@ async function resultado({ job_id, esperar_segundos }) {
   return lineas.join('\n');
 }
 
-// Diff con git si está (lo más legible); si no, solo las líneas que cambiaron.
+// Diff unificado en JavaScript, con 2 líneas de contexto. Antes escribía los dos lados a disco y corría `git diff`:
+// el escáner del directorio de plugins lo marcaba como "bajar y ejecutar", y además no hacía falta.
 function diffDe(antes, despues) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'healer-diff-'));
-  try {
-    fs.writeFileSync(path.join(dir, 'a'), antes);
-    fs.writeFileSync(path.join(dir, 'b'), despues);
-    try {
-      execFileSync('git', ['diff', '--no-index', '--no-color', '-U2', 'a', 'b'], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-      return '(no differences)';
-    } catch (e) {
-      const salida = String(e.stdout || '');
-      if (salida) return salida.split('\n').slice(4).join('\n').slice(0, 12000);
-    }
-  } catch { /* sin git */ } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  if (antes === despues) return '(no differences)';
   const a = antes.split('\n');
   const b = despues.split('\n');
-  const fuera = a.filter((l) => !b.includes(l)).slice(0, 40).map((l) => `- ${l}`);
-  const dentro = b.filter((l) => !a.includes(l)).slice(0, 40).map((l) => `+ ${l}`);
-  return [...fuera, ...dentro].join('\n') || '(whitespace only)';
+  // Se recortan el principio y el final iguales: la tabla de abajo solo cubre la parte que cambió.
+  let ini = 0;
+  while (ini < a.length && ini < b.length && a[ini] === b[ini]) ini++;
+  let finA = a.length, finB = b.length;
+  while (finA > ini && finB > ini && a[finA - 1] === b[finB - 1]) { finA--; finB--; }
+  const ma = a.slice(ini, finA), mb = b.slice(ini, finB);
+  if (ma.length * mb.length > 4_000_000) {
+    // Cambio enorme: sin tabla, el bloque entero quitado y agregado.
+    return [`@@ line ${ini + 1} @@`, ...ma.slice(0, 200).map((l) => `-${l}`), ...mb.slice(0, 200).map((l) => `+${l}`)].join('\n').slice(0, 12000);
+  }
+  const lcs = Array.from({ length: ma.length + 1 }, () => new Uint32Array(mb.length + 1));
+  for (let i = ma.length - 1; i >= 0; i--) for (let j = mb.length - 1; j >= 0; j--) lcs[i][j] = ma[i] === mb[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+  const ops = [];
+  for (let k = Math.max(0, ini - 2); k < ini; k++) ops.push([' ', a[k]]);
+  let i = 0, j = 0;
+  while (i < ma.length || j < mb.length) {
+    if (i < ma.length && j < mb.length && ma[i] === mb[j]) { ops.push([' ', ma[i]]); i++; j++; }
+    else if (i < ma.length && (j === mb.length || lcs[i + 1][j] >= lcs[i][j + 1])) { ops.push(['-', ma[i]]); i++; }
+    else { ops.push(['+', mb[j]]); j++; }
+  }
+  for (let k = finA; k < Math.min(a.length, finA + 2); k++) ops.push([' ', a[k]]);
+  // Más de 4 líneas iguales seguidas en el medio se resumen con "...", como los trozos de git.
+  const salida = [`@@ line ${Math.max(1, ini - 1)} @@`];
+  let iguales = [];
+  const volcar = (alFinal) => {
+    if (iguales.length > 4 && !alFinal) salida.push(...iguales.slice(0, 2), '...', ...iguales.slice(-2));
+    else salida.push(...iguales);
+    iguales = [];
+  };
+  for (const [t, l] of ops) {
+    if (t === ' ') { iguales.push(` ${l}`); continue; }
+    volcar(false);
+    salida.push(`${t}${l}`);
+  }
+  volcar(true);
+  return salida.join('\n').slice(0, 12000);
 }
 
 async function aplicar({ job_id }) {
