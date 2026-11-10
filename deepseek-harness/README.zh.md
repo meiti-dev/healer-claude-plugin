@@ -34,12 +34,12 @@
 
 ## 工作原理
 
-插件通过官方的 `@deepseek-ai/dsh-mcp-client` 添加一个 MCP 服务器：`npx -y -p @meiti/healer@0.1.0 healer-mcp`，与 Healer 的 Claude Code 插件使用的是同一个无依赖服务器。详见 `cordis.patch.yml`。
+插件通过官方的 `@deepseek-ai/dsh-mcp-client` 添加一个 MCP 服务器：`npx -y -p @meiti/healer@0.2.0 healer-mcp`，与 Healer 的 Claude Code 插件使用的是同一个无依赖服务器。详见 `cordis.patch.yml`。
 
 ## 它会运行、发送和保存什么
 
-- **运行：** 用 `git ls-files` 选择要发送的文件，用 `git diff --no-index` 展示每处修改。
-- **发送：** 项目文件（git 跟踪的文件以及未被忽略的新文件；跳过二进制文件和超过 1 MB 的文件），通过 HTTPS 发送到 `https://healer-api.meiti.dev`。不会发送到其他任何地方。
+- **运行：** 除服务器本身外不运行任何程序。它自行读取项目的 `.gitignore` 来选择要发送的文件，并自行生成 diff。
+- **发送：** 项目文件（与 git 会发送的文件相同；始终跳过二进制文件、超过 1 MB 的文件以及 `.env`、`*.pem` 等密钥文件），通过 HTTPS 发送到 `https://healer-api.meiti.dev`。不会发送到其他任何地方。
 - **读取密钥：** 从 `HEALER_API_KEY` 读取；若未设置，则从 `~/.healer/config.json` 读取。密钥只会发送给 Healer API。
 - **保存：** 每个任务在系统临时目录中保存一个小的 JSON 文件；只有调用 `healer_aplicar` 时才会写入你的项目。
 

@@ -34,12 +34,12 @@ Ask the agent: "Send this project to Healer, wait for the result and show me the
 
 ## How it works
 
-The plugin adds one MCP server through the official `@deepseek-ai/dsh-mcp-client`: `npx -y -p @meiti/healer@0.1.0 healer-mcp`, the same dependency-free server used by the Healer plugin for Claude Code. See `cordis.patch.yml`.
+The plugin adds one MCP server through the official `@deepseek-ai/dsh-mcp-client`: `npx -y -p @meiti/healer@0.2.0 healer-mcp`, the same dependency-free server used by the Healer plugin for Claude Code. See `cordis.patch.yml`.
 
 ## What it runs, sends and stores
 
-- **Runs:** `git ls-files` to choose what to send and `git diff --no-index` to show each proposed change.
-- **Sends:** the project files (what git tracks plus new files that are not ignored; binaries and files over 1 MB are skipped) to `https://healer-api.meiti.dev`, over HTTPS. Nothing else, nowhere else.
+- **Runs:** nothing besides the server itself. It reads the project's `.gitignore` files to choose what to send and builds the diffs itself.
+- **Sends:** the project files (the same files git would send; binaries, files over 1 MB and secret files such as `.env` or `*.pem` are always skipped) to `https://healer-api.meiti.dev`, over HTTPS. Nothing else, nowhere else.
 - **Reads your key** from `HEALER_API_KEY` or, if unset, from `~/.healer/config.json`, and sends it only to the Healer API.
 - **Stores** a small JSON file per job in your temporary folder, and writes to your project only when `healer_aplicar` is called.
 

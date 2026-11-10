@@ -9,7 +9,7 @@
       serverName: healer
       transport: stdio
       command: npx
-      args: ['-y', '-p', '@meiti/healer@0.1.0', 'healer-mcp']
+      args: ['-y', '-p', '@meiti/healer@0.2.0', 'healer-mcp']
       env:
         HEALER_API_KEY: !!js process.env.HEALER_API_KEY || ''
       startupTimeoutMs: 120000
