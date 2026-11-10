@@ -47,7 +47,9 @@ This configuration follows the DeepSeek Harness MCP documentation. If your Harne
 
 ## What gets sent
 
-Only what git tracks plus new files that are not ignored. Binaries and files over 1 MB are skipped. On the free level, your code may be used to improve Healer's models; for private code, use pro.
+Only what git tracks plus new files that are not ignored. Binaries and files over 1 MB are skipped.
+
+**Free level and your code:** the free level repairs with free AI providers (Groq, NVIDIA and Gemini). The repaired code may be reused to train Healer's models, and those providers may keep and use what they receive to improve theirs. On the pro level none of your code is used for training. For private code, use pro.
 
 ## Tools
 
