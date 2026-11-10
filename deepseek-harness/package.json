@@ -11,6 +11,7 @@
     "index.js",
     "cordis.patch.yml",
     "README.md",
+    "README.zh.md",
     "LICENSE"
   ],
   "dsh": {
@@ -18,7 +19,14 @@
       "patch": "./cordis.patch.yml"
     }
   },
-  "keywords": ["dsh-plugin", "deepseek-harness", "healer", "mcp", "testing", "repair"],
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "healer",
+    "mcp",
+    "testing",
+    "repair"
+  ],
   "homepage": "https://meiti.dev/healer",
   "repository": {
     "type": "git",

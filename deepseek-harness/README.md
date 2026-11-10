@@ -1,5 +1,7 @@
 # Healer for DeepSeek Harness
 
+[中文](README.zh.md)
+
 Independent verification for your code, inside DeepSeek Harness. Healer runs your tests in an isolated sandbox, repairs what fails and only gives back changes that leave the project better, never worse. It is a second opinion from a different team of models.
 
 ## Install
