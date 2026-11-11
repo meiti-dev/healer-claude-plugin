@@ -15,7 +15,7 @@
       "name": "healer-local",
       "source": "./plugins/healer-local",
       "description": "The same Healer with a local MCP server, for the terminal: reads the project and writes the fixes itself.",
-      "version": "0.3.3"
+      "version": "0.3.5"
     }
   ],
   "description": "Healer by MEITI: independent verification and repair for your code."

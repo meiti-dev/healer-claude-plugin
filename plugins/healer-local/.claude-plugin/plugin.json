@@ -1,6 +1,6 @@
 {
   "name": "healer-local",
-  "version": "0.3.3",
+  "version": "0.3.5",
   "description": "Healer with a local MCP server (for the terminal): reads the project and writes the fixes itself. Same Healer as the healer plugin, which uses the remote server.",
   "author": {
     "name": "MEITI",

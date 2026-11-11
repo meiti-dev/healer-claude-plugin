@@ -20,6 +20,6 @@ Offer the `/healer` command, or call the tools directly:
 
 1. `healer_revisar` sends the project (the files git would send; binaries, files over 1 MB and secret files such as `.env` are skipped). Use `nivel: "free"` unless the user chose pro.
 2. `healer_resultado` checks the job; call it again while it is running.
-3. Show the summary and the diff. `healer_aplicar` writes the changes only after the user says yes, and refuses any file the user edited after sending.
+3. Show the summary, what each file fixes and the diff. Check each change against the rest of the project before recommending it. `healer_aplicar` writes the changes only after the user says yes (pass `archivos` to write only the approved files), and refuses any file the user edited after sending.
 
 Healer's guarantee: what comes back is repaired or equal, never worse. What it could not fix is reported, not hidden.

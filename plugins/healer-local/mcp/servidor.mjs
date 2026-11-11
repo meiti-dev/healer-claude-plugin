@@ -14,7 +14,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import readline from 'node:readline';
 
-const VERSION = '0.3.3';
+const VERSION = '0.3.5';
 const API = (process.env.HEALER_API_URL || 'https://healer-api.meiti.dev').replace(/\/$/, '');
 const leerClave = () => String(process.env.CLAUDE_PLUGIN_OPTION_API_KEY || '').trim();
 const ESTADO = path.join(os.tmpdir(), 'healer-claude-code');
@@ -145,7 +145,8 @@ async function resultado({ job_id, esperar_segundos }) {
     if (!['queued', 'running'].includes(r.status) || Date.now() >= limite) break;
     await new Promise((ok) => setTimeout(ok, 5000));
   }
-  if (r.status === 'queued' || r.status === 'running') return `Still ${r.status === 'queued' ? 'queued' : 'running'}. Call healer_resultado again in a moment.`;
+  // El servidor manda en qué va (proyecto, minutos, etapa, lo hecho): se muestra eso en vez de solo "running".
+  if (r.status === 'queued' || r.status === 'running') return `${r.progress?.message || `Still ${r.status}.`}\nCall healer_resultado again in a moment.\nJob id: ${job_id}`;
   if (r.status === 'error') return `Healer could not finish: ${r.error || 'unknown error'}.`;
 
   const meta = fs.existsSync(archivoDeTrabajo(job_id)) ? JSON.parse(fs.readFileSync(archivoDeTrabajo(job_id), 'utf8')) : null;
@@ -164,8 +165,13 @@ async function resultado({ job_id, esperar_segundos }) {
     lineas.push('No file changes to apply.');
     return lineas.join('\n');
   }
-  lineas.push(`Proposed changes in ${cambiados.length} file(s): ${cambiados.join(', ')}.`);
-  lineas.push('Nothing has been written. Show this to the user and apply only if they agree, with healer_aplicar.');
+  // Qué arregló en cada archivo, para que el usuario elija: se puede aplicar solo una parte (igual que el conector remoto).
+  lineas.push(`Proposed changes in ${cambiados.length} file(s). What each one fixes:`);
+  for (const ruta of cambiados) {
+    const motivos = (r.history || []).filter((h) => h?.file === ruta).map((h) => String(h.error || '').replace(/\s+/g, ' ').slice(0, 200)).filter(Boolean);
+    lineas.push(`- ${ruta}${motivos.length ? `\n    ${motivos.map((m) => `· ${m}`).join('\n    ')}` : ''}`);
+  }
+  lineas.push('Nothing has been written. Review each file against the rest of the project, show this to the user and apply only what they agree to, with healer_aplicar (pass "archivos" to apply only some files).');
   if (meta) {
     for (const ruta of cambiados) {
       const local = path.join(meta.raiz, ruta);
@@ -220,27 +226,35 @@ function diffDe(antes, despues) {
   return salida.join('\n').slice(0, 12000);
 }
 
-async function aplicar({ job_id }) {
+async function aplicar({ job_id, archivos }) {
   const archivo = archivoDeTrabajo(job_id);
   if (!fs.existsSync(archivo)) throw new Error('No proposal stored for that job: call healer_resultado first.');
   const t = JSON.parse(fs.readFileSync(archivo, 'utf8'));
   if (!t.changed_files?.length) return 'That job has no changes to apply.';
+  // Solo lo que el usuario aprobó (si mandó "archivos"); un nombre que Healer no cambió frena todo.
+  const pedidos = Array.isArray(archivos) && archivos.length ? archivos.map(String) : null;
+  if (pedidos) {
+    const ajenos = pedidos.filter((p) => !t.changed_files.includes(p));
+    if (ajenos.length) throw new Error(`These are not among the files Healer changed: ${ajenos.join(', ')}. Changed files: ${t.changed_files.join(', ')}.`);
+  }
+  const elegidos = pedidos ?? t.changed_files;
   // La base tiene que coincidir: si el usuario tocó un archivo después de mandarlo, ese no se pisa.
-  const distintos = t.changed_files.filter((ruta) => {
+  const distintos = elegidos.filter((ruta) => {
     const local = path.join(t.raiz, ruta);
     const actual = fs.existsSync(local) ? fs.readFileSync(local, 'utf8') : null;
     return t.base_hashes[ruta] && (actual === null || sha256(actual) !== t.base_hashes[ruta]);
   });
   if (distintos.length) return `Not applied: these files changed since they were sent to Healer: ${distintos.join(', ')}. Send the project again with healer_revisar.`;
-  for (const ruta of t.changed_files) {
+  for (const ruta of elegidos) {
     const destino = path.resolve(t.raiz, ruta);
     if (!destino.startsWith(t.raiz + path.sep)) throw new Error(`Path outside the project: ${ruta}`);
     if (typeof t.files[ruta] !== 'string') continue;
     fs.mkdirSync(path.dirname(destino), { recursive: true });
     fs.writeFileSync(destino, t.files[ruta]);
   }
-  fs.writeFileSync(archivo, JSON.stringify({ ...t, aplicado: new Date().toISOString() }));
-  return `Applied: ${t.changed_files.length} file(s) written (${t.changed_files.join(', ')}). Review the diff with git before committing.`;
+  fs.writeFileSync(archivo, JSON.stringify({ ...t, aplicado: new Date().toISOString(), aplicados: elegidos }));
+  const descartados = t.changed_files.filter((c) => !elegidos.includes(c));
+  return `Applied: ${elegidos.length} file(s) written (${elegidos.join(', ')}).${descartados.length ? ` Left out as requested: ${descartados.join(', ')}.` : ''} Review the diff with git before committing.`;
 }
 
 const HERRAMIENTAS = [
@@ -265,8 +279,8 @@ const HERRAMIENTAS = [
   },
   {
     name: 'healer_aplicar',
-    description: 'Write Healer\'s proposed changes into the project. Only call it after the user agreed. It refuses any file that changed since it was sent.',
-    inputSchema: { type: 'object', properties: { job_id: { type: 'string' } }, required: ['job_id'] },
+    description: 'Write Healer\'s proposed changes into the project. Only call it after the user agreed. Pass "archivos" to write only the files the user approved (the rest are left out). It refuses any file that changed since it was sent.',
+    inputSchema: { type: 'object', properties: { job_id: { type: 'string' }, archivos: { type: 'array', items: { type: 'string' }, description: 'Optional: paths (as listed by healer_resultado) of the only files to write.' } }, required: ['job_id'] },
     run: aplicar
   }
 ];
