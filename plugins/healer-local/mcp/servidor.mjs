@@ -296,7 +296,9 @@ readline.createInterface({ input: process.stdin }).on('line', async (linea) => {
   if (m.id === undefined) return; // notificaciones (initialized, cancelled): nada que responder
   try {
     if (m.method === 'initialize') {
-      return responder(m.id, { protocolVersion: m.params?.protocolVersion || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'healer', version: VERSION } });
+      // Mismo ícono y título que el conector remoto, para los clientes que los muestran (MCP 2025-11-25).
+      const icono = (lado) => ({ src: `https://healer-api.meiti.dev/icono-${lado}.png?v=1`, mimeType: 'image/png', sizes: [`${lado}x${lado}`] });
+      return responder(m.id, { protocolVersion: m.params?.protocolVersion || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'healer', title: 'Healer', version: VERSION, websiteUrl: 'https://meiti.dev/healer', icons: [icono(512), icono(192), icono(64)] } });
     }
     if (m.method === 'ping') return responder(m.id, {});
     if (m.method === 'tools/list') return responder(m.id, { tools: HERRAMIENTAS.map(({ run, ...h }) => h) });
