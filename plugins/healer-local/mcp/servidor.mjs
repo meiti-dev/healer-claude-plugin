@@ -14,7 +14,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import readline from 'node:readline';
 
-const VERSION = '0.3.5';
+const VERSION = '0.3.6';
 const API = (process.env.HEALER_API_URL || 'https://healer-api.meiti.dev').replace(/\/$/, '');
 const leerClave = () => String(process.env.CLAUDE_PLUGIN_OPTION_API_KEY || '').trim();
 const ESTADO = path.join(os.tmpdir(), 'healer-claude-code');
@@ -254,7 +254,14 @@ async function aplicar({ job_id, archivos }) {
   }
   fs.writeFileSync(archivo, JSON.stringify({ ...t, aplicado: new Date().toISOString(), aplicados: elegidos }));
   const descartados = t.changed_files.filter((c) => !elegidos.includes(c));
+  // Le cuenta a Healer qué se aplicó y qué no (solo para medir qué cambios valen la pena; si falla, no importa).
+  await api('POST', `/v1/repair/${encodeURIComponent(job_id)}/decision`, { aplicados: elegidos, descartados, via: 'plugin_local' }).catch(() => {});
   return `Applied: ${elegidos.length} file(s) written (${elegidos.join(', ')}).${descartados.length ? ` Left out as requested: ${descartados.join(', ')}.` : ''} Review the diff with git before committing.`;
+}
+
+async function informarDecision({ job_id, aplicados = [], descartados = [] }) {
+  const r = await api('POST', `/v1/repair/${encodeURIComponent(job_id)}/decision`, { aplicados, descartados, via: 'agente' });
+  return `Thanks: recorded ${r.registrados ?? 0} decision(s) (${aplicados.length} applied, ${descartados.length} left out).`;
 }
 
 const HERRAMIENTAS = [
@@ -282,6 +289,12 @@ const HERRAMIENTAS = [
     description: 'Write Healer\'s proposed changes into the project. Only call it after the user agreed. Pass "archivos" to write only the files the user approved (the rest are left out). It refuses any file that changed since it was sent.',
     inputSchema: { type: 'object', properties: { job_id: { type: 'string' }, archivos: { type: 'array', items: { type: 'string' }, description: 'Optional: paths (as listed by healer_resultado) of the only files to write.' } }, required: ['job_id'] },
     run: aplicar
+  },
+  {
+    name: 'healer_informar_decision',
+    description: 'Tell Healer which of its changes the user decided not to apply (or applied by hand). healer_aplicar reports this by itself; use this when the user applies none, or edits by hand. Healer stores only fingerprints of the file paths, never code.',
+    inputSchema: { type: 'object', properties: { job_id: { type: 'string' }, aplicados: { type: 'array', items: { type: 'string' } }, descartados: { type: 'array', items: { type: 'string' } } }, required: ['job_id'] },
+    run: informarDecision
   }
 ];
 
