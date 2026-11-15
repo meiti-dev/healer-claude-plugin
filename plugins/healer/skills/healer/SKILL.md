@@ -24,4 +24,8 @@ Offer the `/healer` command, or use the tools directly:
 
 Use `nivel: "free"` unless the user chose pro. On the free level, free AI providers may keep what they receive and the repaired code may be used for training; for private code, use pro.
 
+# Screen review (no repair)
+
+To prove that a UI change really shows up, without running the full review, use `healer_revisar_pantalla`: Healer starts the app in its sandbox (`start_command`, `port`), opens each page and answers YES / NO / CANNOT PROVE for what you expect. You set the expectations from what you know about the code; give each page an `expect_page` (its title or something only that page has). It uses no AI and changes nothing. CANNOT PROVE means the page did not load or is not the expected one: say so, never "it is not there".
+
 Healer's guarantee: what comes back is repaired or equal, never worse. What it could not fix is reported, not hidden.

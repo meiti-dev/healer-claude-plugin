@@ -14,7 +14,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import readline from 'node:readline';
 
-const VERSION = '0.3.6';
+const VERSION = '0.3.8';
 const API = (process.env.HEALER_API_URL || 'https://healer-api.meiti.dev').replace(/\/$/, '');
 const leerClave = () => String(process.env.CLAUDE_PLUGIN_OPTION_API_KEY || '').trim();
 const ESTADO = path.join(os.tmpdir(), 'healer-claude-code');
@@ -137,6 +137,39 @@ async function revisar({ ruta, nivel, tests }) {
   ].join('\n');
 }
 
+// 🖥️ [REVISIÓN DE PANTALLA, 2026-11-15] Healer levanta la app en su sandbox y revisa sus páginas, sin reparar ni usar IA.
+async function revisarPantalla({ ruta, start_command, port, pages }) {
+  const raiz = path.resolve(ruta || process.cwd());
+  if (!fs.existsSync(raiz) || !fs.statSync(raiz).isDirectory()) throw new Error(`Folder not found: ${raiz}.`);
+  const { files, total, omitidos } = archivosDelProyecto(raiz);
+  if (!Object.keys(files).length) throw new Error('No text files to send were found in that folder.');
+  const appId = `claude-code/${path.basename(raiz).replace(/[^\w.-]/g, '-').slice(0, 60) || 'proyecto'}`;
+  const envio = await api('POST', '/v1/screen', { files, app_id: appId, start_command, port, pages });
+  return [
+    `Screen review started: job ${envio.job_id}.`,
+    `${Object.keys(files).length} files, ${Math.round(total / 1024)} KB${omitidos ? `, ${omitidos} skipped (binary or too large)` : ''}.`,
+    'Healer starts the app in its sandbox and checks the pages, without repairing anything. It usually takes under a minute: check with healer_resultado.'
+  ].join('\n');
+}
+
+// El informe de una revisión de pantalla: estado de cada página, lo que se esperaba y la prueba (igual que el conector remoto).
+function informePantalla(r) {
+  const lineas = [];
+  const titulo = { checked: 'Screen review finished.', did_not_start: 'The app did not start, so no page could be checked.', unsupported_stack: 'Unsupported stack: no supported language was found to install and start the app.' }[r.status] || r.status;
+  lineas.push(`Result: ${titulo}`, `Summary: ${r.message}`);
+  if (r.ms) lineas.push(`Time: ${Math.round((r.ms.total || 0) / 1000)} s (install ${Math.round((r.ms.install || 0) / 1000)} s, start ${Math.round((r.ms.start || 0) / 1000)} s, pages ${Math.round((r.ms.pages || 0) / 1000)} s).`);
+  for (const pg of r.pages || []) {
+    lineas.push('', `Page ${pg.path}: ${pg.state}${pg.http ? ` (HTTP ${pg.http})` : ''}${pg.title ? `, title "${pg.title}"` : ''}`);
+    if (pg.reasons?.length) lineas.push(`  Why: ${pg.reasons.join('; ')}`);
+    for (const e of pg.expectations || []) lineas.push(`  ${e.answer} ${JSON.stringify(e.expectation)} · ${e.proof}`);
+    if (pg.failed_requests?.length) lineas.push(`  Requests that failed: ${pg.failed_requests.join(', ')}`);
+    if (pg.visual_issues?.length) lineas.push(`  Visual issues: ${pg.visual_issues.slice(0, 8).map((v) => `${v.type}${v.element ? ` at ${v.element}` : ''}: ${v.detail}`).join(' | ')}`);
+    if (pg.map) lineas.push('  Screen map:', ...String(pg.map).split('\n').slice(0, 60).map((l) => `    ${l}`));
+  }
+  lineas.push('', 'CANNOT PROVE means the page did not load or is not the expected one: report it as such, never as "it is not there". Nothing was changed in the project.');
+  return lineas.join('\n');
+}
+
 async function resultado({ job_id, esperar_segundos }) {
   const limite = Date.now() + Math.min(Math.max(Number(esperar_segundos) || 45, 0), 50) * 1000;
   let r;
@@ -148,6 +181,7 @@ async function resultado({ job_id, esperar_segundos }) {
   // El servidor manda en qué va (proyecto, minutos, etapa, lo hecho): se muestra eso en vez de solo "running".
   if (r.status === 'queued' || r.status === 'running') return `${r.progress?.message || `Still ${r.status}.`}\nCall healer_resultado again in a moment.\nJob id: ${job_id}`;
   if (r.status === 'error') return `Healer could not finish: ${r.error || 'unknown error'}.`;
+  if (r.tipo === 'pantalla') return informePantalla(r);
 
   const meta = fs.existsSync(archivoDeTrabajo(job_id)) ? JSON.parse(fs.readFileSync(archivoDeTrabajo(job_id), 'utf8')) : null;
   const cambiados = r.changed_files || [];
@@ -300,6 +334,21 @@ const HERRAMIENTAS = [
     description: 'Write Healer\'s proposed changes into the project. Only call it after the user agreed. Pass "archivos" to write only the files the user approved (the rest are left out). It refuses any file that changed since it was sent.',
     inputSchema: { type: 'object', properties: { job_id: { type: 'string' }, archivos: { type: 'array', items: { type: 'string' }, description: 'Optional: paths (as listed by healer_resultado) of the only files to write.' } }, required: ['job_id'] },
     run: aplicar
+  },
+  {
+    name: 'healer_revisar_pantalla',
+    description: 'Start the app in Healer\'s isolated sandbox and check what its pages really show, WITHOUT repairing anything and without AI (much faster than a full review). Per page: the load state (LOADED, DID NOT LOAD with the reason, or NOT THE EXPECTED PAGE), failed requests, measured visual issues, a text map of the screen, and YES / NO / CANNOT PROVE for each expectation. You set the expectations from what you know about the code. Returns a job id; then call healer_resultado.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ruta: { type: 'string', description: 'Project folder. Defaults to the current working directory.' },
+        start_command: { type: 'string', description: 'The command that starts the app, e.g. "npm run dev". It must listen on 0.0.0.0.' },
+        port: { type: 'number', description: 'The port the app listens on (1024-65535).' },
+        pages: { type: 'array', items: { type: 'object' }, description: 'Up to 10 pages: [{ "path": "/", "expect_page": { "title_is": "My App" }, "expectations": [{ "exists": "Save" }, { "not_exists": "Delete all" }, { "text": "Total", "contains": "0" }, { "no_issues": true }], "storage": { "session": "test-token" }, "wait_for": "Dashboard", "width": 375 }]. Test accounts only in storage.' }
+      },
+      required: ['start_command', 'port', 'pages']
+    },
+    run: revisarPantalla
   },
   {
     name: 'healer_informar_decision',
