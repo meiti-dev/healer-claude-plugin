@@ -157,7 +157,18 @@ async function resultado({ job_id, esperar_segundos }) {
   const lineas = [];
   const titulo = { production_ready: 'Production ready: every check passes.', unresolved: r.partial_fix ? 'Partial delivery: some failures fixed, some remain.' : 'Unresolved: Healer could not leave every check passing.', unsupported_stack: 'Unsupported stack: no supported language was found to verify.' }[r.status] || r.status;
   lineas.push(`Result: ${titulo}`);
-  if (r.failures) lineas.push(`Failures: ${r.failures.found ?? '?'} found, ${r.failures.fixed ?? '?'} fixed.${(r.failures.remaining || []).length ? ` Remaining: ${r.failures.remaining.map((f) => `[${f.origen}] ${String(f.detalle).slice(0, 160)}`).join(' | ')}` : ''}`);
+  // 📋 [2026-11-14, pedido del usuario: "el usuario no ve lo que vemos, no lo demos por hecho"] El informe de Healer (report):
+  // qué se reparó, tests antes y después, y cada pendiente con qué es, por qué quedó y qué hace falta. Sin informe (Healer
+  // de antes), la línea de fallas de siempre.
+  if (r.report) {
+    lineas.push(`Summary: ${r.report.headline}`);
+    for (const x of r.report.fixed || []) lineas.push(`Fixed: ${x}`);
+    if ((r.report.pending || []).length) {
+      lineas.push('Pending (tell the user every item and what it needs; they decide whether to send it again or handle it themselves):');
+      for (const p of r.report.pending) lineas.push(`- [${p.check}] ${p.what} Why: ${p.why} Needs: ${p.needs}`);
+    }
+    for (const x of r.report.support_updates || []) lineas.push(`Optional support update: ${x}`);
+  } else if (r.failures) lineas.push(`Failures: ${r.failures.found ?? '?'} found, ${r.failures.fixed ?? '?'} fixed.${(r.failures.remaining || []).length ? ` Remaining: ${r.failures.remaining.map((f) => `[${f.origen}] ${String(f.detalle).slice(0, 160)}`).join(' | ')}` : ''}`);
   if (r.audit_report?.vulnerabilities_found) lineas.push(`Security: ${r.audit_report.vulnerabilities_found} findings (${(r.audit_report.findings || []).slice(0, 5).map((f) => `${f.archivo}:${f.linea} ${f.severidad}`).join(', ')}).`);
   if (r.pentagono_report?.puntaje != null) lineas.push(`Quality score (Pentagon): ${r.pentagono_report.puntaje}/100.`);
   if ((r.pending_improvements || []).length) lineas.push(`Non-blocking suggestions: ${r.pending_improvements.length} (not applied).`);

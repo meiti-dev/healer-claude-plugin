@@ -1,0 +1,20 @@
+{
+  "name": "render",
+  "version": "0.2.0",
+  "description": "Render testing built for AI agents: a structured map of the screen instead of screenshots, actions by intent instead of coordinates, and map-to-map comparison to see what changed. Verified by Healer.",
+  "author": {
+    "name": "MEITI",
+    "url": "https://meiti.dev/agents"
+  },
+  "homepage": "https://meiti.dev/agents",
+  "license": "MIT",
+  "keywords": [
+    "testing",
+    "render",
+    "ui",
+    "accessibility",
+    "visual-regression",
+    "e2e"
+  ],
+  "repository": "https://github.com/meiti-dev/render"
+}

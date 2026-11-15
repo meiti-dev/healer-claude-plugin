@@ -15,8 +15,14 @@
       "name": "healer-local",
       "source": "./plugins/healer-local",
       "description": "The same Healer with a local MCP server, for the terminal: reads the project and writes the fixes itself.",
-      "version": "0.3.6"
+      "version": "0.3.7"
+    },
+    {
+      "name": "render",
+      "source": "./plugins/render",
+      "description": "Render testing for AI agents: a map of the screen instead of screenshots, actions by intent, and proof of what changed. Verified by Healer.",
+      "version": "0.2.0"
     }
   ],
-  "description": "Healer by MEITI: independent verification and repair for your code."
+  "description": "MEITI tools for agents: Healer (independent verification and repair) and Render (screen testing without screenshots)."
 }
