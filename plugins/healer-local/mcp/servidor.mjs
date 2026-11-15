@@ -14,7 +14,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import readline from 'node:readline';
 
-const VERSION = '0.3.8';
+const VERSION = '0.3.9';
 const API = (process.env.HEALER_API_URL || 'https://healer-api.meiti.dev').replace(/\/$/, '');
 const leerClave = () => String(process.env.CLAUDE_PLUGIN_OPTION_API_KEY || '').trim();
 const ESTADO = path.join(os.tmpdir(), 'healer-claude-code');
@@ -144,7 +144,8 @@ async function revisarPantalla({ ruta, start_command, port, pages }) {
   const { files, total, omitidos } = archivosDelProyecto(raiz);
   if (!Object.keys(files).length) throw new Error('No text files to send were found in that folder.');
   const appId = `claude-code/${path.basename(raiz).replace(/[^\w.-]/g, '-').slice(0, 60) || 'proyecto'}`;
-  const envio = await api('POST', '/v1/screen', { files, app_id: appId, start_command, port, pages });
+  // Sin start_command, port ni pages, Healer los busca (.healer.json "screen", la última corrida que funcionó, package.json).
+  const envio = await api('POST', '/v1/screen', { files, app_id: appId, start_command: start_command || undefined, port: port || undefined, pages: Array.isArray(pages) && pages.length ? pages : undefined });
   return [
     `Screen review started: job ${envio.job_id}.`,
     `${Object.keys(files).length} files, ${Math.round(total / 1024)} KB${omitidos ? `, ${omitidos} skipped (binary or too large)` : ''}.`,
@@ -157,12 +158,15 @@ function informePantalla(r) {
   const lineas = [];
   const titulo = { checked: 'Screen review finished.', did_not_start: 'The app did not start, so no page could be checked.', unsupported_stack: 'Unsupported stack: no supported language was found to install and start the app.' }[r.status] || r.status;
   lineas.push(`Result: ${titulo}`, `Summary: ${r.message}`);
+  if (r.start) lineas.push(`Started with: "${r.start.command}" on port ${r.start.port} · source: ${r.start.source} (${r.start.detail}) · ${r.start.verified ? 'verified: the app answered' : 'not verified: the app did not answer'}.`);
+  if (r.server_log) lineas.push('Server log (last lines):', ...String(r.server_log).split('\n').slice(-25).map((l) => `    ${l}`));
   if (r.ms) lineas.push(`Time: ${Math.round((r.ms.total || 0) / 1000)} s (install ${Math.round((r.ms.install || 0) / 1000)} s, start ${Math.round((r.ms.start || 0) / 1000)} s, pages ${Math.round((r.ms.pages || 0) / 1000)} s).`);
   for (const pg of r.pages || []) {
     lineas.push('', `Page ${pg.path}: ${pg.state}${pg.http ? ` (HTTP ${pg.http})` : ''}${pg.title ? `, title "${pg.title}"` : ''}`);
     if (pg.reasons?.length) lineas.push(`  Why: ${pg.reasons.join('; ')}`);
     for (const e of pg.expectations || []) lineas.push(`  ${e.answer} ${JSON.stringify(e.expectation)} · ${e.proof}`);
     if (pg.failed_requests?.length) lineas.push(`  Requests that failed: ${pg.failed_requests.join(', ')}`);
+    if (pg.page_errors?.length) lineas.push(`  Page errors: ${pg.page_errors.slice(0, 5).join(' | ')}`);
     if (pg.visual_issues?.length) lineas.push(`  Visual issues: ${pg.visual_issues.slice(0, 8).map((v) => `${v.type}${v.element ? ` at ${v.element}` : ''}: ${v.detail}`).join(' | ')}`);
     if (pg.map) lineas.push('  Screen map:', ...String(pg.map).split('\n').slice(0, 60).map((l) => `    ${l}`));
   }
@@ -337,16 +341,16 @@ const HERRAMIENTAS = [
   },
   {
     name: 'healer_revisar_pantalla',
-    description: 'Start the app in Healer\'s isolated sandbox and check what its pages really show, WITHOUT repairing anything and without AI (much faster than a full review). Per page: the load state (LOADED, DID NOT LOAD with the reason, or NOT THE EXPECTED PAGE), failed requests, measured visual issues, a text map of the screen, and YES / NO / CANNOT PROVE for each expectation. You set the expectations from what you know about the code. Returns a job id; then call healer_resultado.',
+    description: 'Start the app in Healer\'s isolated sandbox and check what its pages really show, WITHOUT repairing anything and without AI (much faster than a full review). Per page: the load state (LOADED, DID NOT LOAD with the reason, or NOT THE EXPECTED PAGE), failed requests, measured visual issues, a text map of the screen, and YES / NO / CANNOT PROVE for each expectation. Only the folder is needed: without start_command and port, Healer finds how to start the app (.healer.json "screen", the command that worked last time, or package.json / the Python entry file) and says where it came from; without pages it checks "/". You set the expectations from what you know about the code. Returns a job id; then call healer_resultado.',
     inputSchema: {
       type: 'object',
       properties: {
         ruta: { type: 'string', description: 'Project folder. Defaults to the current working directory.' },
-        start_command: { type: 'string', description: 'The command that starts the app, e.g. "npm run dev". It must listen on 0.0.0.0.' },
-        port: { type: 'number', description: 'The port the app listens on (1024-65535).' },
-        pages: { type: 'array', items: { type: 'object' }, description: 'Up to 10 pages: [{ "path": "/", "expect_page": { "title_is": "My App" }, "expectations": [{ "exists": "Save" }, { "not_exists": "Delete all" }, { "text": "Total", "contains": "0" }, { "no_issues": true }], "storage": { "session": "test-token" }, "wait_for": "Dashboard", "width": 375 }]. Test accounts only in storage.' }
+        start_command: { type: 'string', description: 'Optional: the command that starts the app, e.g. "npm run dev". It must listen on 0.0.0.0. Leave it out and Healer finds it.' },
+        port: { type: 'number', description: 'Optional: the port the app listens on (1024-65535). Leave it out and Healer finds it.' },
+        pages: { type: 'array', items: { type: 'object' }, description: 'Optional (default: [{ "path": "/" }]). Up to 10 pages: [{ "path": "/", "expect_page": { "title_is": "My App" }, "expectations": [{ "exists": "Save" }, { "not_exists": "Delete all" }, { "text": "Total", "contains": "0" }, { "no_issues": true }], "storage": { "session": "test-token" }, "wait_for": "Dashboard", "width": 375 }]. Test accounts only in storage.' }
       },
-      required: ['start_command', 'port', 'pages']
+      required: []
     },
     run: revisarPantalla
   },
