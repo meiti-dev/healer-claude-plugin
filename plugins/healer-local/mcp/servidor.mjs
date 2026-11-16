@@ -14,7 +14,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import readline from 'node:readline';
 
-const VERSION = '0.3.9';
+const VERSION = '0.4.0';
 const API = (process.env.HEALER_API_URL || 'https://healer-api.meiti.dev').replace(/\/$/, '');
 const leerClave = () => String(process.env.CLAUDE_PLUGIN_OPTION_API_KEY || '').trim();
 const ESTADO = path.join(os.tmpdir(), 'healer-claude-code');
@@ -112,7 +112,7 @@ async function api(metodo, ruta, cuerpo) {
   }
   const r = await fetch(API + ruta, { method: metodo, headers: { 'x-api-key': CLAVE, 'content-type': 'application/json', 'user-agent': `healer-claude-code/${VERSION}` }, body: cuerpo ? JSON.stringify(cuerpo) : undefined });
   const datos = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(`Healer answered ${r.status}: ${datos.error || 'no detail'}`);
+  if (!r.ok) { const e = new Error(`Healer answered ${r.status}: ${datos.error || datos.message || 'no detail'}`); e.status = r.status; e.datos = datos; throw e; }
   return datos;
 }
 
@@ -120,18 +120,26 @@ const archivoDeTrabajo = (jobId) => path.join(ESTADO, `${String(jobId).replace(/
 
 // ───────────────────────────── Herramientas ─────────────────────────────
 
-async function revisar({ ruta, nivel, tests }) {
+async function revisar({ ruta, nivel, tests, confirmar_free, solo_revisar }) {
   const raiz = path.resolve(ruta || process.cwd());
   if (!fs.existsSync(raiz) || !fs.statSync(raiz).isDirectory()) throw new Error(`Folder not found: ${raiz}.`);
   const { files, total, omitidos } = archivosDelProyecto(raiz);
   if (!Object.keys(files).length) throw new Error('No text files to send were found in that folder.');
   if (Array.isArray(tests) && tests.length && !files['.healer.json']) files['.healer.json'] = JSON.stringify({ tests }, null, 2);
   const appId = `claude-code/${path.basename(raiz).replace(/[^\w.-]/g, '-').slice(0, 60) || 'proyecto'}`;
-  const envio = await api('POST', '/v1/repair', { files, app_id: appId, ai_level: nivel === 'pro' ? 'pro' : 'free' });
+  // 🔐 [2026-11-16] Sin nivel propio (antes free por defecto): vale la política de la organización (pro salvo que el dueño cambie).
+  // Si tocaría free y la organización pide preguntar, Healer responde 409 y no se encola nada.
+  let envio;
+  try {
+    envio = await api('POST', '/v1/repair', { files, app_id: appId, ...(nivel === 'free' || nivel === 'pro' ? { ai_level: nivel } : {}), ...(confirmar_free === true ? { confirm_free: true } : {}), ...(solo_revisar === true ? { review_only: true } : {}) });
+  } catch (e) {
+    if (e.status === 409) return `Needs the user's confirmation, nothing was queued: ${e.datos?.message}\nIn this tool, "confirm_free" is confirmar_free: true${e.datos?.reason === 'cupo_agotado' ? ', and "review_only" is solo_revisar: true' : ''}.`;
+    throw e;
+  }
   fs.mkdirSync(ESTADO, { recursive: true });
   fs.writeFileSync(archivoDeTrabajo(envio.job_id), JSON.stringify({ raiz, appId, enviado: new Date().toISOString() }));
   return [
-    `Sent to Healer: job ${envio.job_id} (${envio.ai_level || nivel || 'free'} level).`,
+    `Sent to Healer: job ${envio.job_id} (${envio.ai_level === 'none' ? 'review only, no AI' : `${envio.ai_level} level`}${envio.ai_level_reason ? `, ${({ pedido: 'requested', organizacion: 'organization default', cupo: 'single repairs', confirmado: 'confirmed by the user', auto: 'organization allows free automatically', solo_revisar: 'review only' })[envio.ai_level_reason] || envio.ai_level_reason}` : ''}).`,
     `${Object.keys(files).length} files, ${Math.round(total / 1024)} KB${omitidos ? `, ${omitidos} skipped (binary or too large)` : ''}.`,
     'Healer runs the tests in an isolated sandbox and repairs what fails. It usually takes a few minutes: check with healer_resultado.'
   ].join('\n');
@@ -159,6 +167,7 @@ function informePantalla(r) {
   const titulo = { checked: 'Screen review finished.', did_not_start: 'The app did not start, so no page could be checked.', unsupported_stack: 'Unsupported stack: no supported language was found to install and start the app.' }[r.status] || r.status;
   lineas.push(`Result: ${titulo}`, `Summary: ${r.message}`);
   if (r.start) lineas.push(`Started with: "${r.start.command}" on port ${r.start.port} · source: ${r.start.source} (${r.start.detail}) · ${r.start.verified ? 'verified: the app answered' : 'not verified: the app did not answer'}.`);
+  for (const s of r.missing_services || []) lineas.push(`Missing service: ${s.address} (${s.requests} request(s) with no answer${s.found_in ? `; it seems to be in ${s.found_in}` : ''}). ${s.hint}`);
   if (r.server_log) lineas.push('Server log (last lines):', ...String(r.server_log).split('\n').slice(-25).map((l) => `    ${l}`));
   if (r.ms) lineas.push(`Time: ${Math.round((r.ms.total || 0) / 1000)} s (install ${Math.round((r.ms.install || 0) / 1000)} s, start ${Math.round((r.ms.start || 0) / 1000)} s, pages ${Math.round((r.ms.pages || 0) / 1000)} s).`);
   for (const pg of r.pages || []) {
@@ -195,6 +204,8 @@ async function resultado({ job_id, esperar_segundos }) {
   const lineas = [];
   const titulo = { production_ready: 'Production ready: every check passes.', unresolved: r.partial_fix ? 'Partial delivery: some failures fixed, some remain.' : 'Unresolved: Healer could not leave every check passing.', unsupported_stack: 'Unsupported stack: no supported language was found to verify.' }[r.status] || r.status;
   lineas.push(`Result: ${titulo}`);
+  // 🔐 [2026-11-16] Siempre se dice con qué nivel corrió y por qué.
+  if (r.ai_level) lineas.push(`AI level: ${r.ai_level === 'none' ? 'none (review only)' : r.ai_level}${r.ai_level_reason ? ` (${({ pedido: 'requested', organizacion: 'organization default', cupo: 'single repairs', confirmado: 'confirmed by the user', auto: 'organization allows free automatically', solo_revisar: 'review only', benchmark: 'benchmark' })[r.ai_level_reason] || r.ai_level_reason})` : ''}.`);
   // 📋 [2026-11-14, pedido del usuario: "el usuario no ve lo que vemos, no lo demos por hecho"] El informe de Healer (report):
   // qué se reparó, tests antes y después, y cada pendiente con qué es, por qué quedó y qué hace falta. Sin informe (Healer
   // de antes), la línea de fallas de siempre.
@@ -313,7 +324,36 @@ async function informarDecision({ job_id, aplicados = [], descartados = [] }) {
   return `Thanks: recorded ${r.registrados ?? 0} decision(s) (${aplicados.length} applied, ${descartados.length} left out).`;
 }
 
+// 🛈 [HEALER_INFO, 2026-11-16] Qué servidor es y qué permite la cuenta (igual que en el conector remoto): versión, cada herramienta
+// con la huella de su definición, la regla de nivel de la organización y el cupo pro. Sin IA y sin costo.
+const huella = (texto) => crypto.createHash('sha256').update(texto).digest('hex').slice(0, 12);
+async function info() {
+  const tools = HERRAMIENTAS.map(({ name, description, inputSchema }) => ({ name, fingerprint: huella(JSON.stringify({ name, description, inputSchema })) }));
+  const tools_fingerprint = huella(tools.map((t) => `${t.name}:${t.fingerprint}`).join('|'));
+  let cuenta = null;
+  try { cuenta = await api('GET', '/v1/info'); } catch (e) { cuenta = { error: e.message }; }
+  const lineas = [
+    `Healer MCP server (local) version ${VERSION}, talking to ${API}${cuenta?.remote_connector_version ? ` (server connector version ${cuenta.remote_connector_version})` : ''}.`,
+    `Tools (${tools.length}), fingerprint ${tools_fingerprint}: ${tools.map((t) => `${t.name} [${t.fingerprint}]`).join(', ')}.`,
+    'If a name here is missing from your tool list, restart the agent (or update the Healer plugin) to load the current version.',
+  ];
+  if (cuenta?.error) lineas.push(`Account: ${cuenta.error}`);
+  else if (cuenta) {
+    lineas.push(`AI level of the organization: ${cuenta.ai_level_default} by default; when a job would run on free: ${cuenta.when_free === 'ask' ? "ask the user first (free never runs without the user's yes)" : 'free runs automatically'}.`);
+    const r = cuenta.repairs;
+    if (r) lineas.push(`Pro repairs this month: ${r.used}${r.limit !== null ? ` of ${r.limit}` : ' (no monthly limit)'}${r.extra ? `, plus ${r.extra} single repair(s)` : ''}.`);
+  }
+  lineas.push('', JSON.stringify({ server: 'healer', kind: 'local', version: VERSION, tools_fingerprint, tools, account: cuenta }));
+  return lineas.join('\n');
+}
+
 const HERRAMIENTAS = [
+  {
+    name: 'healer_info',
+    description: 'What this Healer server is and what your account allows, in one call (no AI, no cost): server version, every tool with a fingerprint of its definition, the organization rule for the AI level and the pro repairs left this month. Use it when a tool you expect is missing or behaves differently than described.',
+    inputSchema: { type: 'object', properties: {} },
+    run: info
+  },
   {
     name: 'healer_revisar',
     description: 'Send the project to Healer for independent verification: it runs the tests in an isolated sandbox, repairs what fails and returns only changes that leave the project better, never worse. Returns a job id; then call healer_resultado.',
@@ -321,7 +361,9 @@ const HERRAMIENTAS = [
       type: 'object',
       properties: {
         ruta: { type: 'string', description: 'Project folder. Defaults to the current working directory.' },
-        nivel: { type: 'string', enum: ['free', 'pro'], description: 'free (open models, no cost) or pro (paid models, uses your plan). Defaults to free.' },
+        nivel: { type: 'string', enum: ['free', 'pro'], description: 'Optional. Leave it out unless the user asked for a level: the organization default applies (pro unless the owner changed it). Free means free AI providers, which may keep what they receive, and the code may be used for training.' },
+        confirmar_free: { type: 'boolean', description: 'Only after the user said yes to the free level for THIS job (Healer asks when a job would run on free). Never set it on your own.' },
+        solo_revisar: { type: 'boolean', description: 'Run the checks without repairing and without AI (offered when the pro repairs are used up and the user does not want free).' },
         tests: { type: 'array', items: { type: 'string' }, description: 'Optional: the tests that define "fixed" (e.g. tests/test_api.py::test_login). Without this Healer runs the full suite.' }
       }
     },

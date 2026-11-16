@@ -18,7 +18,9 @@ Do not suggest it for one-line edits, questions about the code, or projects with
 
 Offer the `/healer` command, or call the tools directly:
 
-1. `healer_revisar` sends the project (the files git would send; binaries, files over 1 MB and secret files such as `.env` are skipped). Use `nivel: "free"` unless the user chose pro.
+1. `healer_revisar` sends the project (the files git would send; binaries, files over 1 MB and secret files such as `.env` are skipped). Leave `nivel` out unless the user named a level: the organization rule applies (pro unless the owner changed it). If a job would run on free (the user asked for free, or the pro repairs of the plan are used up) and the organization asks for confirmation, Healer answers that it needs the user's yes and queues nothing: tell the user what free means (free AI providers may keep what they receive, and the code may be used for training) and send it again with `confirmar_free: true` only if they agree. When the pro repairs are used up, `solo_revisar: true` runs the checks without repairing and without AI. Never set `confirmar_free` on your own.
+
+`healer_info` says the server version, every tool with a fingerprint, the organization rule for the AI level and the pro repairs left. Call it when a tool you expect is missing or behaves differently than described, or before a repair if you need to know whether free would need the user's yes.
 2. `healer_resultado` checks the job; call it again while it is running.
 3. Show the summary, what each file fixes and the diff. Check each change against the rest of the project before recommending it. `healer_aplicar` writes the changes only after the user says yes (pass `archivos` to write only the approved files), and refuses any file the user edited after sending.
 

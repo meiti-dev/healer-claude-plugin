@@ -5,7 +5,7 @@ argument-hint: "[free|pro] [test ids...]"
 
 Run Healer on the current project.
 
-1. Call `healer_preparar_envio` with `proyecto` set to the name of the current folder. If the user passed `pro` in "$ARGUMENTS", use `nivel: "pro"`; otherwise `free`. Any other words in "$ARGUMENTS" that look like test ids (for example `tests/test_api.py::test_login` or `test/router.js`) go in `tests`.
+1. Call `healer_preparar_envio` with `proyecto` set to the name of the current folder. If the user passed `pro` or `free` in "$ARGUMENTS", use that `nivel`; otherwise leave `nivel` out (the organization rule applies, pro unless the owner changed it). If Healer answers that free needs the user's yes, ask before sending it again with `confirmar_free: true`. Any other words in "$ARGUMENTS" that look like test ids (for example `tests/test_api.py::test_login` or `test/router.js`) go in `tests`.
 2. Run the upload command it returns, in the project folder: the git version if the folder is a git repository, the other one if not. Tell the user what the command does (it packs the project and uploads it to Healer; secret files, binaries and ignored files are dropped on arrival). Its output has the job id.
 3. Tell the user the job was sent and that Healer usually takes a few minutes.
 4. Call `healer_resultado` with the job id. While it says the job is still queued or running, call it again. Do not change the project in the meantime.

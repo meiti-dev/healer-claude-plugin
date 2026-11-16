@@ -5,7 +5,7 @@ argument-hint: "[free|pro] [test ids...]"
 
 Run Healer on the current project.
 
-1. Call `healer_revisar` with the current working directory. If the user passed `pro` in "$ARGUMENTS", use `nivel: "pro"`; otherwise `free`. Any other words in "$ARGUMENTS" that look like test ids (for example `tests/test_api.py::test_login` or `test/router.js`) go in `tests`.
+1. Call `healer_revisar` with the current working directory. If the user passed `pro` or `free` in "$ARGUMENTS", use that `nivel`; otherwise leave `nivel` out (the organization rule applies, pro unless the owner changed it). If Healer answers that free needs the user's yes, ask before sending it again with `confirmar_free: true`. Any other words in "$ARGUMENTS" that look like test ids (for example `tests/test_api.py::test_login` or `test/router.js`) go in `tests`.
 2. Tell the user the job was sent and that Healer usually takes a few minutes.
 3. Call `healer_resultado` with the job id. While it says the job is still queued or running, call it again. Do not do anything else to the project in the meantime.
 4. When it finishes, give the user a short summary in plain words: the result, failures found and fixed, anything that remains, security findings, and the files Healer proposes to change, with what each one fixes. Show the diff for each file. Before recommending a file, check its change against the rest of the project (for example, that a field or function it uses really exists, and how the server handles what it sends); say plainly if you would leave one out and why.
