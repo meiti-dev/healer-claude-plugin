@@ -14,7 +14,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import readline from 'node:readline';
 
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 const API = (process.env.HEALER_API_URL || 'https://healer-api.meiti.dev').replace(/\/$/, '');
 const leerClave = () => String(process.env.CLAUDE_PLUGIN_OPTION_API_KEY || '').trim();
 const ESTADO = path.join(os.tmpdir(), 'healer-claude-code');
@@ -120,7 +120,7 @@ const archivoDeTrabajo = (jobId) => path.join(ESTADO, `${String(jobId).replace(/
 
 // ───────────────────────────── Herramientas ─────────────────────────────
 
-async function revisar({ ruta, nivel, tests, confirmar_free, solo_revisar }) {
+async function revisar({ ruta, nivel, tests, confirmar_free, solo_revisar, bug }) {
   const raiz = path.resolve(ruta || process.cwd());
   if (!fs.existsSync(raiz) || !fs.statSync(raiz).isDirectory()) throw new Error(`Folder not found: ${raiz}.`);
   const { files, total, omitidos } = archivosDelProyecto(raiz);
@@ -131,7 +131,7 @@ async function revisar({ ruta, nivel, tests, confirmar_free, solo_revisar }) {
   // Si tocaría free y la organización pide preguntar, Healer responde 409 y no se encola nada.
   let envio;
   try {
-    envio = await api('POST', '/v1/repair', { files, app_id: appId, ...(nivel === 'free' || nivel === 'pro' ? { ai_level: nivel } : {}), ...(confirmar_free === true ? { confirm_free: true } : {}), ...(solo_revisar === true ? { review_only: true } : {}) });
+    envio = await api('POST', '/v1/repair', { files, app_id: appId, ...(nivel === 'free' || nivel === 'pro' ? { ai_level: nivel } : {}), ...(confirmar_free === true ? { confirm_free: true } : {}), ...(solo_revisar === true ? { review_only: true } : {}), ...(typeof bug === 'string' && bug.trim() ? { bug_report: bug.trim().slice(0, 4000) } : {}) });
   } catch (e) {
     if (e.status === 409) return `Needs the user's confirmation, nothing was queued: ${e.datos?.message}\nIn this tool, "confirm_free" is confirmar_free: true${e.datos?.reason === 'cupo_agotado' ? ', and "review_only" is solo_revisar: true' : ''}.`;
     throw e;
@@ -199,7 +199,7 @@ async function resultado({ job_id, esperar_segundos }) {
   const meta = fs.existsSync(archivoDeTrabajo(job_id)) ? JSON.parse(fs.readFileSync(archivoDeTrabajo(job_id), 'utf8')) : null;
   const cambiados = r.changed_files || [];
   // La propuesta queda guardada para healer_aplicar (y para mirarla con calma).
-  if (meta) fs.writeFileSync(archivoDeTrabajo(job_id), JSON.stringify({ ...meta, terminado: new Date().toISOString(), status: r.status, changed_files: cambiados, base_hashes: r.base_hashes || {}, files: Object.fromEntries(cambiados.map((c) => [c, r.files?.[c]])) }));
+  if (meta) fs.writeFileSync(archivoDeTrabajo(job_id), JSON.stringify({ ...meta, terminado: new Date().toISOString(), status: r.status, changed_files: cambiados, base_hashes: r.base_hashes || {}, ...(r.requires_acceptance ? { requires_acceptance: r.requires_acceptance } : {}), files: Object.fromEntries(cambiados.map((c) => [c, r.files?.[c]])) }));
 
   const lineas = [];
   const titulo = { production_ready: 'Production ready: every check passes.', unresolved: r.partial_fix ? 'Partial delivery: some failures fixed, some remain.' : 'Unresolved: Healer could not leave every check passing.', unsupported_stack: 'Unsupported stack: no supported language was found to verify.' }[r.status] || r.status;
@@ -209,8 +209,17 @@ async function resultado({ job_id, esperar_segundos }) {
   // 📋 [2026-11-14, pedido del usuario: "el usuario no ve lo que vemos, no lo demos por hecho"] El informe de Healer (report):
   // qué se reparó, tests antes y después, y cada pendiente con qué es, por qué quedó y qué hace falta. Sin informe (Healer
   // de antes), la línea de fallas de siempre.
+  // 🔬 [2026-11-16] Reproducir antes de reparar: si vino con bug_report, el test que lo reprodujo y si pasa después.
+  if (r.reproduction) {
+    const rp = r.reproduction;
+    lineas.push(rp.status === 'reproduced'
+      ? `Bug reproduced with a test (${rp.test_file}): it failed with the original code${rp.passes_after === true ? ' and passes after the repair' : rp.passes_after === false ? ', and it STILL FAILS after the repair' : ''}. Offer the user to add this test to the project so the bug cannot come back:\n${String(rp.test_content || '').split('\n').map((l) => '    ' + l).join('\n')}`
+      : `Bug NOT reproduced (${rp.status}): ${rp.message}`);
+  }
   if (r.report) {
     lineas.push(`Summary: ${r.report.headline}`);
+    // ⚖️ [2026-11-16] Una dependencia que baja el puntaje: lo primero que tiene que saber la persona.
+    if (r.requires_acceptance) lineas.push(`NEEDS THE USER'S ACCEPTANCE (tell them before anything else): ${r.requires_acceptance.reason} Quality score ${r.requires_acceptance.pentagono_before} → ${r.requires_acceptance.pentagono_after}. Apply it only if they accept (healer_aplicar with acepto_puntaje_menor: true), or leave out ${r.requires_acceptance.files.join(', ')}.`);
     for (const x of r.report.fixed || []) lineas.push(`Fixed: ${x}`);
     if ((r.report.pending || []).length) {
       lineas.push('Pending (tell the user every item and what it needs; they decide whether to send it again or handle it themselves):');
@@ -286,7 +295,7 @@ function diffDe(antes, despues) {
   return salida.join('\n').slice(0, 12000);
 }
 
-async function aplicar({ job_id, archivos }) {
+async function aplicar({ job_id, archivos, acepto_puntaje_menor }) {
   const archivo = archivoDeTrabajo(job_id);
   if (!fs.existsSync(archivo)) throw new Error('No proposal stored for that job: call healer_resultado first.');
   const t = JSON.parse(fs.readFileSync(archivo, 'utf8'));
@@ -298,6 +307,11 @@ async function aplicar({ job_id, archivos }) {
     if (ajenos.length) throw new Error(`These are not among the files Healer changed: ${ajenos.join(', ')}. Changed files: ${t.changed_files.join(', ')}.`);
   }
   const elegidos = pedidos ?? t.changed_files;
+  // ⚖️ [2026-11-16] La misma regla que Healer (orquestador/aceptacion.ts): sin el sí del usuario, la dependencia que baja el
+  // puntaje no se escribe. Dejarla afuera y aplicar el resto sí se puede.
+  const ra = t.requires_acceptance;
+  const tocados = ra && acepto_puntaje_menor !== true ? ra.files.filter((x) => elegidos.includes(x)) : [];
+  if (tocados.length) return `Needs the user's acceptance before applying: ${ra.reason} Quality score ${ra.pentagono_before} → ${ra.pentagono_after}. Ask the user; if they accept the lower score, call healer_aplicar again with acepto_puntaje_menor: true. Or leave out ${tocados.join(', ')} and apply the rest.`;
   // La base tiene que coincidir: si el usuario tocó un archivo después de mandarlo, ese no se pisa.
   const distintos = elegidos.filter((ruta) => {
     const local = path.join(t.raiz, ruta);
@@ -364,6 +378,7 @@ const HERRAMIENTAS = [
         nivel: { type: 'string', enum: ['free', 'pro'], description: 'Optional. Leave it out unless the user asked for a level: the organization default applies (pro unless the owner changed it). Free means free AI providers, which may keep what they receive, and the code may be used for training.' },
         confirmar_free: { type: 'boolean', description: 'Only after the user said yes to the free level for THIS job (Healer asks when a job would run on free). Never set it on your own.' },
         solo_revisar: { type: 'boolean', description: 'Run the checks without repairing and without AI (offered when the pro repairs are used up and the user does not want free).' },
+        bug: { type: 'string', description: 'Optional: the bug as the user tells it (what they did, what they expected, what happened). Healer first writes a test that reproduces it and checks that it fails with the current code; only then repairs, and the test must pass after. If it does not reproduce, nothing is repaired blindly.' },
         tests: { type: 'array', items: { type: 'string' }, description: 'Optional: the tests that define "fixed" (e.g. tests/test_api.py::test_login). Without this Healer runs the full suite.' }
       }
     },
@@ -378,7 +393,7 @@ const HERRAMIENTAS = [
   {
     name: 'healer_aplicar',
     description: 'Write Healer\'s proposed changes into the project. Only call it after the user agreed. Pass "archivos" to write only the files the user approved (the rest are left out). It refuses any file that changed since it was sent.',
-    inputSchema: { type: 'object', properties: { job_id: { type: 'string' }, archivos: { type: 'array', items: { type: 'string' }, description: 'Optional: paths (as listed by healer_resultado) of the only files to write.' } }, required: ['job_id'] },
+    inputSchema: { type: 'object', properties: { job_id: { type: 'string' }, archivos: { type: 'array', items: { type: 'string' }, description: 'Optional: paths (as listed by healer_resultado) of the only files to write.' }, acepto_puntaje_menor: { type: 'boolean', description: 'Only when the result says "Needs the user acceptance" and the user explicitly accepted the lower quality score.' } }, required: ['job_id'] },
     run: aplicar
   },
   {
