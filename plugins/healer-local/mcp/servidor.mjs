@@ -14,7 +14,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import readline from 'node:readline';
 
-const VERSION = '0.5.0';
+const VERSION = '0.6.0';
 const API = (process.env.HEALER_API_URL || 'https://healer-api.meiti.dev').replace(/\/$/, '');
 const leerClave = () => String(process.env.CLAUDE_PLUGIN_OPTION_API_KEY || '').trim();
 const ESTADO = path.join(os.tmpdir(), 'healer-claude-code');
@@ -202,7 +202,7 @@ async function resultado({ job_id, esperar_segundos }) {
   if (meta) fs.writeFileSync(archivoDeTrabajo(job_id), JSON.stringify({ ...meta, terminado: new Date().toISOString(), status: r.status, changed_files: cambiados, base_hashes: r.base_hashes || {}, ...(r.requires_acceptance ? { requires_acceptance: r.requires_acceptance } : {}), files: Object.fromEntries(cambiados.map((c) => [c, r.files?.[c]])) }));
 
   const lineas = [];
-  const titulo = { production_ready: 'Production ready: every check passes.', unresolved: r.partial_fix ? 'Partial delivery: some failures fixed, some remain.' : 'Unresolved: Healer could not leave every check passing.', unsupported_stack: 'Unsupported stack: no supported language was found to verify.' }[r.status] || r.status;
+  const titulo = r.not_accepted ? `Not accepted: ${r.not_accepted.reason} Healer only reviewed it; nothing was repaired and it does not count as a repair success or failure.` : { production_ready: 'Production ready: every check passes.', unresolved: r.partial_fix ? 'Partial delivery: some failures fixed, some remain.' : 'Unresolved: Healer could not leave every check passing.', unsupported_stack: 'Unsupported stack: no supported language was found to verify.' }[r.status] || r.status;
   lineas.push(`Result: ${titulo}`);
   // 🔐 [2026-11-16] Siempre se dice con qué nivel corrió y por qué.
   if (r.ai_level) lineas.push(`AI level: ${r.ai_level === 'none' ? 'none (review only)' : r.ai_level}${r.ai_level_reason ? ` (${({ pedido: 'requested', organizacion: 'organization default', cupo: 'single repairs', confirmado: 'confirmed by the user', auto: 'organization allows free automatically', solo_revisar: 'review only', benchmark: 'benchmark' })[r.ai_level_reason] || r.ai_level_reason})` : ''}.`);
