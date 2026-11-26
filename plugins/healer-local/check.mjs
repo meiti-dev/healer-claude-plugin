@@ -15,7 +15,7 @@ import path from 'node:path';
 import { rutasDelProyecto, archivosDelProyecto, resumenOmitidos } from './mcp/proyecto.mjs';
 
 const API = (process.env.HEALER_API_URL || 'https://healer-api.meiti.dev').replace(/\/$/, '');
-const VERSION = '0.7.0';
+const VERSION = '0.7.1';
 const es = /^es/i.test(process.env.HEALER_LANG || Intl.DateTimeFormat().resolvedOptions().locale || '');
 const tx = (en, esp) => (es ? esp : en);
 
@@ -188,9 +188,17 @@ export async function instalarHook(raiz, { bloquear = false, completo = false } 
   fs.mkdirSync(c.carpeta, { recursive: true });
   const escribir = (nombre, bloque) => {
     const ruta = path.join(c.carpeta, nombre);
-    let actual = '';
+    let actual = null;
     try { actual = fs.readFileSync(ruta, 'utf8'); } catch { /* no había */ }
-    fs.writeFileSync(ruta, bloque ? conBloque(actual, bloque) : sinBloque(actual));
+    // Sin bloque que poner: si el archivo no existía no se crea, y si solo tenía el nuestro se borra (antes quedaba vacío).
+    if (!bloque) {
+      if (actual === null) return;
+      const limpio = sinBloque(actual);
+      if (!limpio.replace(/^#!.*$/m, '').trim()) { fs.rmSync(ruta, { force: true }); return; }
+      fs.writeFileSync(ruta, limpio);
+      return;
+    }
+    fs.writeFileSync(ruta, conBloque(actual ?? '', bloque));
     try { fs.chmodSync(ruta, 0o755); } catch { /* Windows: git for Windows lo corre igual */ }
   };
   escribir('pre-commit', bloquePreCommit({ bloquear }));
