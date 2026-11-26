@@ -13,93 +13,13 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import readline from 'node:readline';
+import { archivosDelProyecto, resumenOmitidos } from './proyecto.mjs';
+import { revisarLocal, textoLocal, revisarCompleto, instalarHook, quitarHook, estadoHook } from '../check.mjs';
 
-const VERSION = '0.6.0';
+const VERSION = '0.8.0';
 const API = (process.env.HEALER_API_URL || 'https://healer-api.meiti.dev').replace(/\/$/, '');
 const leerClave = () => String(process.env.CLAUDE_PLUGIN_OPTION_API_KEY || '').trim();
 const ESTADO = path.join(os.tmpdir(), 'healer-claude-code');
-const TOPE_ARCHIVO = 1_000_000;
-const TOPE_TOTAL = 18 * 1024 * 1024;
-const IGNORAR = new Set(['.git', 'node_modules', '.venv', 'venv', 'dist', 'build', '.next', 'coverage', '__pycache__', '.healer', '.turbo', '.cache']);
-
-// ───────────────────────────── Proyecto ─────────────────────────────
-
-// Archivos de secretos: nunca salen de la máquina, aunque el proyecto se haya olvidado de ignorarlos.
-const SECRETO = /^(\.env(\..+)?|.*\.(pem|key|p12|pfx|keystore|jks)|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.npmrc|\.pypirc|\.netrc|credentials(\.json)?)$/i;
-const PLANTILLA_ENV = /^\.env\.(example|sample|template|dist)$/i;
-
-// Una línea de .gitignore → expresión regular sobre la ruta relativa a la carpeta del .gitignore. Cubre lo que se usa en
-// la práctica: comentarios, "!" para volver a incluir, "/" final (solo carpetas), "/" inicial o en el medio (anclado),
-// *, ?, ** y [clases]. Antes esto lo hacía `git ls-files`; se hace acá para que el plugin no ejecute ningún programa.
-function reglaGitignore(linea) {
-  let l = linea.replace(/\r$/, '');
-  if (!l.trim() || l.startsWith('#')) return null;
-  l = l.replace(/(?<!\\)\s+$/, '');
-  const negada = l.startsWith('!');
-  if (negada) l = l.slice(1);
-  l = l.replace(/^\\([#!])/, '$1');
-  const soloCarpeta = l.endsWith('/');
-  if (soloCarpeta) l = l.slice(0, -1);
-  const anclada = l.includes('/');
-  if (l.startsWith('/')) l = l.slice(1);
-  let re = '';
-  for (let i = 0; i < l.length; i++) {
-    const c = l[i];
-    if (c === '*' && l[i + 1] === '*') {
-      if (l[i + 2] === '/') { re += '(?:.*/)?'; i += 2; } else { re += '.*'; i += 1; }
-    } else if (c === '*') re += '[^/]*';
-    else if (c === '?') re += '[^/]';
-    else if (c === '[') { const fin = l.indexOf(']', i + 1); if (fin > i) { re += '[' + l.slice(i + 1, fin).replace(/^!/, '^').replace(/\\/g, '\\\\') + ']'; i = fin; } else re += '\\['; }
-    else if (c === '\\' && i + 1 < l.length) { re += l[i + 1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); i++; }
-    else re += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
-  return { negada, soloCarpeta, re: new RegExp(anclada ? `^${re}$` : `(?:^|/)${re}$`) };
-}
-
-function leerReglas(archivo, base) {
-  try { return fs.readFileSync(archivo, 'utf8').split('\n').map(reglaGitignore).filter(Boolean).map((r) => ({ ...r, base })); } catch { return []; }
-}
-
-// Gana la última regla que coincide, como en git. `rel` es la ruta relativa a la raíz del proyecto.
-function ignorado(rel, esCarpeta, reglas) {
-  let resultado = false;
-  for (const r of reglas) {
-    if (r.soloCarpeta && !esCarpeta) continue;
-    const local = r.base ? (rel.startsWith(r.base + '/') ? rel.slice(r.base.length + 1) : null) : rel;
-    if (local !== null && r.re.test(local)) resultado = !r.negada;
-  }
-  return resultado;
-}
-
-function archivosDelProyecto(raiz) {
-  // Lo que git mandaría: respeta los .gitignore del proyecto (en cada carpeta) y .git/info/exclude.
-  const rutas = [];
-  const recorrer = (dir, rel, reglas) => {
-    const propias = [...reglas, ...leerReglas(path.join(dir, '.gitignore'), rel)];
-    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (IGNORAR.has(e.name) || e.isSymbolicLink()) continue;
-      const r = rel ? `${rel}/${e.name}` : e.name;
-      if (ignorado(r, e.isDirectory(), propias)) continue;
-      if (e.isDirectory()) recorrer(path.join(dir, e.name), r, propias);
-      else if (e.isFile() && (!SECRETO.test(e.name) || PLANTILLA_ENV.test(e.name))) rutas.push(r);
-    }
-  };
-  recorrer(raiz, '', leerReglas(path.join(raiz, '.git', 'info', 'exclude'), ''));
-  const files = {};
-  let total = 0;
-  let omitidos = 0;
-  for (const ruta of rutas) {
-    if (ruta.split('/').some((parte) => IGNORAR.has(parte))) continue;
-    const p = path.join(raiz, ruta);
-    let buf;
-    try { const info = fs.statSync(p); if (!info.isFile() || info.size > TOPE_ARCHIVO) { omitidos++; continue; } buf = fs.readFileSync(p); } catch { continue; }
-    if (buf.includes(0)) { omitidos++; continue; } // binario
-    if (total + buf.length > TOPE_TOTAL) { omitidos++; continue; }
-    files[ruta] = buf.toString('utf8');
-    total += buf.length;
-  }
-  return { files, total, omitidos };
-}
 
 const sha256 = (texto) => crypto.createHash('sha256').update(texto, 'utf8').digest('hex');
 
@@ -123,7 +43,7 @@ const archivoDeTrabajo = (jobId) => path.join(ESTADO, `${String(jobId).replace(/
 async function revisar({ ruta, nivel, tests, confirmar_free, solo_revisar, bug }) {
   const raiz = path.resolve(ruta || process.cwd());
   if (!fs.existsSync(raiz) || !fs.statSync(raiz).isDirectory()) throw new Error(`Folder not found: ${raiz}.`);
-  const { files, total, omitidos } = archivosDelProyecto(raiz);
+  const { files, binary_files, total, omitidos_lista } = archivosDelProyecto(raiz);
   if (!Object.keys(files).length) throw new Error('No text files to send were found in that folder.');
   if (Array.isArray(tests) && tests.length && !files['.healer.json']) files['.healer.json'] = JSON.stringify({ tests }, null, 2);
   const appId = `claude-code/${path.basename(raiz).replace(/[^\w.-]/g, '-').slice(0, 60) || 'proyecto'}`;
@@ -131,7 +51,7 @@ async function revisar({ ruta, nivel, tests, confirmar_free, solo_revisar, bug }
   // Si tocaría free y la organización pide preguntar, Healer responde 409 y no se encola nada.
   let envio;
   try {
-    envio = await api('POST', '/v1/repair', { files, app_id: appId, ...(nivel === 'free' || nivel === 'pro' ? { ai_level: nivel } : {}), ...(confirmar_free === true ? { confirm_free: true } : {}), ...(solo_revisar === true ? { review_only: true } : {}), ...(typeof bug === 'string' && bug.trim() ? { bug_report: bug.trim().slice(0, 4000) } : {}) });
+    envio = await api('POST', '/v1/repair', { files, ...(Object.keys(binary_files).length ? { binary_files } : {}), app_id: appId, ...(nivel === 'free' || nivel === 'pro' ? { ai_level: nivel } : {}), ...(confirmar_free === true ? { confirm_free: true } : {}), ...(solo_revisar === true ? { review_only: true } : {}), ...(typeof bug === 'string' && bug.trim() ? { bug_report: bug.trim().slice(0, 4000) } : {}), ...(omitidos_lista.length ? { omitted_files: omitidos_lista } : {}) });
   } catch (e) {
     if (e.status === 409) return `Needs the user's confirmation, nothing was queued: ${e.datos?.message}\nIn this tool, "confirm_free" is confirmar_free: true${e.datos?.reason === 'cupo_agotado' ? ', and "review_only" is solo_revisar: true' : ''}.`;
     throw e;
@@ -140,7 +60,7 @@ async function revisar({ ruta, nivel, tests, confirmar_free, solo_revisar, bug }
   fs.writeFileSync(archivoDeTrabajo(envio.job_id), JSON.stringify({ raiz, appId, enviado: new Date().toISOString() }));
   return [
     `Sent to Healer: job ${envio.job_id} (${envio.ai_level === 'none' ? 'review only, no AI' : `${envio.ai_level} level`}${envio.ai_level_reason ? `, ${({ pedido: 'requested', organizacion: 'organization default', cupo: 'single repairs', confirmado: 'confirmed by the user', auto: 'organization allows free automatically', solo_revisar: 'review only' })[envio.ai_level_reason] || envio.ai_level_reason}` : ''}).`,
-    `${Object.keys(files).length} files, ${Math.round(total / 1024)} KB${omitidos ? `, ${omitidos} skipped (binary or too large)` : ''}.`,
+    `${Object.keys(files).length} files${Object.keys(binary_files).length ? ` + ${Object.keys(binary_files).length} binary` : ''}, ${Math.round(total / 1024)} KB.${omitidos_lista.length ? ` ${resumenOmitidos(omitidos_lista)}` : ''}`,
     'Healer runs the tests in an isolated sandbox and repairs what fails. It usually takes a few minutes: check with healer_resultado.'
   ].join('\n');
 }
@@ -149,14 +69,14 @@ async function revisar({ ruta, nivel, tests, confirmar_free, solo_revisar, bug }
 async function revisarPantalla({ ruta, start_command, port, pages }) {
   const raiz = path.resolve(ruta || process.cwd());
   if (!fs.existsSync(raiz) || !fs.statSync(raiz).isDirectory()) throw new Error(`Folder not found: ${raiz}.`);
-  const { files, total, omitidos } = archivosDelProyecto(raiz);
+  const { files, total, omitidos_lista } = archivosDelProyecto(raiz);
   if (!Object.keys(files).length) throw new Error('No text files to send were found in that folder.');
   const appId = `claude-code/${path.basename(raiz).replace(/[^\w.-]/g, '-').slice(0, 60) || 'proyecto'}`;
   // Sin start_command, port ni pages, Healer los busca (.healer.json "screen", la última corrida que funcionó, package.json).
   const envio = await api('POST', '/v1/screen', { files, app_id: appId, start_command: start_command || undefined, port: port || undefined, pages: Array.isArray(pages) && pages.length ? pages : undefined });
   return [
     `Screen review started: job ${envio.job_id}.`,
-    `${Object.keys(files).length} files, ${Math.round(total / 1024)} KB${omitidos ? `, ${omitidos} skipped (binary or too large)` : ''}.`,
+    `${Object.keys(files).length} files, ${Math.round(total / 1024)} KB.${omitidos_lista.length ? ` ${resumenOmitidos(omitidos_lista)}` : ''}`,
     'Healer starts the app in its sandbox and checks the pages, without repairing anything. It usually takes under a minute: check with healer_resultado.'
   ].join('\n');
 }
@@ -192,7 +112,8 @@ async function resultado({ job_id, esperar_segundos }) {
     await new Promise((ok) => setTimeout(ok, 5000));
   }
   // El servidor manda en qué va (proyecto, minutos, etapa, lo hecho): se muestra eso en vez de solo "running".
-  if (r.status === 'queued' || r.status === 'running') return `${r.progress?.message || `Still ${r.status}.`}\nCall healer_resultado again in a moment.\nJob id: ${job_id}`;
+  // [2026-11-23] Igual que el conector remoto: el cliente no recibe avisos y deja de preguntar al terminar su turno.
+  if (r.status === 'queued' || r.status === 'running') return `${r.progress?.message || `Still ${r.status}.`}\nKeep checking: call healer_resultado again now with the same job id. Do not tell the user it finished until this tool returns the result.\nIf you have to end your turn first, tell the user it is still running and that they can ask you to check job ${job_id} again.\nJob id: ${job_id}`;
   if (r.status === 'error') return `Healer could not finish: ${r.error || 'unknown error'}.`;
   if (r.tipo === 'pantalla') return informePantalla(r);
 
@@ -228,8 +149,26 @@ async function resultado({ job_id, esperar_segundos }) {
     for (const x of r.report.support_updates || []) lineas.push(`Optional support update: ${x}`);
   } else if (r.failures) lineas.push(`Failures: ${r.failures.found ?? '?'} found, ${r.failures.fixed ?? '?'} fixed.${(r.failures.remaining || []).length ? ` Remaining: ${r.failures.remaining.map((f) => `[${f.origen}] ${String(f.detalle).slice(0, 160)}`).join(' | ')}` : ''}`);
   if (r.audit_report?.vulnerabilities_found) lineas.push(`Security: ${r.audit_report.vulnerabilities_found} findings (${(r.audit_report.findings || []).slice(0, 5).map((f) => `${f.archivo}:${f.linea} ${f.severidad}`).join(', ')}).`);
-  if (r.pentagono_report?.puntaje != null) lineas.push(`Quality score (Pentagon): ${r.pentagono_report.puntaje}/100.`);
-  if ((r.pending_improvements || []).length) lineas.push(`Non-blocking suggestions: ${r.pending_improvements.length} (not applied).`);
+  if (r.files_left_out?.length) lineas.push(`${resumenOmitidos(r.files_left_out)} The checks ran without them: if one is needed to build or test, the result can fail for that reason.`);
+  // 📋 [2026-11-25] De dónde sale el puntaje (pentagono_report.desglose, lo calcula Healer) y qué dice cada sugerencia.
+  const pr = r.pentagono_report;
+  if (pr?.puntaje != null) {
+    lineas.push(`Quality score (Pentagon): ${pr.puntaje}/100${pr.critico ? ' (needs attention)' : ''}.${pr.desglose ? ' Where the points went:' : ''}`);
+    const nombres = { quality: 'Code quality', dead_code: 'Dead code', dependencies: 'Dependencies (known vulnerabilities)' };
+    for (const p of pr.desglose || []) {
+      const sev = Object.entries(p.by_severity || {}).map(([s, n]) => `${n} ${s}`).join(', ');
+      lineas.push(`- ${nombres[p.parte] || p.parte} (${(p.tools || []).join(', ')}): -${p.deducted} of max ${p.cap}${p.at_cap ? ' (at its cap)' : ''}; ${p.findings ? `${p.findings} finding(s): ${sev}` : 'no findings'}.`);
+      for (const h of p.top || []) lineas.push(`    ${h.severity} ${h.package ?? (h.file ? `${h.file}${h.line ? `:${h.line}` : ''}` : '')}: ${h.message}`);
+      if (p.findings > (p.top || []).length) lineas.push(`    ... and ${p.findings - p.top.length} more`);
+    }
+    if (pr.aceptados?.length) lineas.push(`Accepted in .healer.json (do not deduct): ${pr.aceptados.map((a) => `${a.paquete ?? a.mensaje} (${a.motivo})`).join('; ')}.`);
+  }
+  const sug = r.pending_improvements || [];
+  if (sug.length) {
+    lineas.push(`Non-blocking suggestions (not applied): ${sug.length}.`);
+    for (const s of sug.slice(0, 10)) lineas.push(`- ${s.archivo}: ${String(s.diagnostico).slice(0, 300)}`);
+    if (sug.length > 10) lineas.push(`- ... and ${sug.length - 10} more (all of them are in the Healer panel).`);
+  }
   if (!cambiados.length) {
     lineas.push('No file changes to apply.');
     return lineas.join('\n');
@@ -361,6 +300,23 @@ async function info() {
   return lineas.join('\n');
 }
 
+// 🧭 [2026-11-26] healer check y el hook antes de cada commit (ver ../check.mjs). healer_check sin completo no manda nada.
+async function chequear({ ruta, archivos, completo }) {
+  const raiz = path.resolve(ruta || process.cwd());
+  if (completo === true) return (await revisarCompleto({ raiz })).texto;
+  const lista = Array.isArray(archivos) && archivos.length ? archivos.map(String) : null;
+  return textoLocal(await revisarLocal({ raiz, archivos: lista }), { archivos: lista });
+}
+async function hookDeCommit({ ruta, accion, bloquear, completo }) {
+  const raiz = path.resolve(ruta || process.cwd());
+  if (accion === 'on') return instalarHook(raiz, { bloquear: bloquear === true, completo: completo === true });
+  if (accion === 'off') return quitarHook(raiz);
+  const e = estadoHook(raiz);
+  if (e.error) return e.error;
+  if (e.externa) return `Hooks live in "${e.externa}" (husky or core.hooksPath): Healer does not manage them; add the healer line to its pre-commit file.`;
+  return e.activo ? `On: ${e.bloquea ? 'blocks the commit on errors' : 'warns, never blocks'}; full review after each commit: ${e.completo ? 'on' : 'off'}.` : 'Off.';
+}
+
 const HERRAMIENTAS = [
   {
     name: 'healer_info',
@@ -383,6 +339,18 @@ const HERRAMIENTAS = [
       }
     },
     run: revisar
+  },
+  {
+    name: 'healer_check',
+    description: 'Check the project with Healer rules, locally and in seconds: nothing leaves this computer and no AI is used. The rules come from real bugs (hand-copied lists that fell behind, Express routes that shadow each other, ALTER before CREATE, INSERT OR REPLACE that wipes columns, dotenv imported late, a route without the check its siblings have). Pass archivos to see only what touches those files (for example, the files of a commit). completo: true sends the project to Healer for a full review without AI (Pentagon, Semgrep, tests); it is skipped when Healer already watches the repo.',
+    inputSchema: { type: 'object', properties: { ruta: { type: 'string', description: 'Project folder. Defaults to the current working directory.' }, archivos: { type: 'array', items: { type: 'string' }, description: 'Optional: only findings in these files (paths relative to the project).' }, completo: { type: 'boolean', description: 'Full review in Healer without AI. Only when the user asks for it.' } } },
+    run: chequear
+  },
+  {
+    name: 'healer_hook',
+    description: 'Turn on or off the Healer check before every commit in this repo (a git hook), or see its state. Only when the user asks. On: it warns and never blocks, unless bloquear is true (blocks on errors in the files of the commit). completo: true also sends a full review without AI after each commit, in the background, except when Healer already watches the repo (no double runs). If the repo keeps its hooks elsewhere (husky), it says what line to add instead of touching team files.',
+    inputSchema: { type: 'object', properties: { ruta: { type: 'string', description: 'Project folder. Defaults to the current working directory.' }, accion: { type: 'string', enum: ['on', 'off', 'status'] }, bloquear: { type: 'boolean' }, completo: { type: 'boolean' } }, required: ['accion'] },
+    run: hookDeCommit
   },
   {
     name: 'healer_resultado',
