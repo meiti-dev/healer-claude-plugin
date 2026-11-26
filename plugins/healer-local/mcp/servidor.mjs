@@ -16,10 +16,35 @@ import readline from 'node:readline';
 import { archivosDelProyecto, resumenOmitidos } from './proyecto.mjs';
 import { revisarLocal, textoLocal, revisarCompleto, instalarHook, quitarHook, estadoHook } from '../check.mjs';
 
-const VERSION = '0.8.0';
+const VERSION = '0.8.2';
 const API = (process.env.HEALER_API_URL || 'https://healer-api.meiti.dev').replace(/\/$/, '');
 const leerClave = () => String(process.env.CLAUDE_PLUGIN_OPTION_API_KEY || '').trim();
-const ESTADO = path.join(os.tmpdir(), 'healer-claude-code');
+// 🔒 [2026-11-26, sugerencia de la vigilancia de Healer] El estado de cada trabajo (la carpeta del proyecto y lo propuesto) decide dónde
+// escribe healer_aplicar. Antes vivía en una carpeta temporal compartida y con permisos por defecto: en una máquina con varios
+// usuarios, otro podía plantar un JSON y hacer escribir archivos donde quisiera. Ahora la carpeta es de este usuario (0700), cada
+// archivo es 0600, y en Linux/macOS no se confía en una carpeta o un archivo que sea de otro dueño.
+const usuarioDelSistema = (() => { try { return os.userInfo().username.replace(/[^\w.-]/g, '_') || 'usuario'; } catch { return 'usuario'; } })();
+const ESTADO = path.join(os.tmpdir(), `healer-claude-code-${usuarioDelSistema}`);
+const esMio = (ruta) => {
+  if (typeof process.getuid !== 'function') return true; // Windows: la carpeta temporal ya es del usuario
+  const s = fs.statSync(ruta);
+  return s.uid === process.getuid();
+};
+function prepararEstado() {
+  fs.mkdirSync(ESTADO, { recursive: true, mode: 0o700 });
+  if (!esMio(ESTADO)) throw new Error(`The state folder ${ESTADO} belongs to another user: remove it and try again.`);
+  try { fs.chmodSync(ESTADO, 0o700); } catch { /* Windows */ }
+}
+function leerEstado(jobId) {
+  const a = archivoDeTrabajo(jobId);
+  if (!fs.existsSync(a)) return null;
+  if (!esMio(ESTADO) || !esMio(a)) throw new Error(`The stored state of job ${jobId} belongs to another user: it is not used.`);
+  return JSON.parse(fs.readFileSync(a, 'utf8'));
+}
+function guardarEstado(jobId, datos) {
+  prepararEstado();
+  fs.writeFileSync(archivoDeTrabajo(jobId), JSON.stringify(datos), { mode: 0o600 });
+}
 
 const sha256 = (texto) => crypto.createHash('sha256').update(texto, 'utf8').digest('hex');
 
@@ -45,7 +70,18 @@ async function revisar({ ruta, nivel, tests, confirmar_free, solo_revisar, bug }
   if (!fs.existsSync(raiz) || !fs.statSync(raiz).isDirectory()) throw new Error(`Folder not found: ${raiz}.`);
   const { files, binary_files, total, omitidos_lista } = archivosDelProyecto(raiz);
   if (!Object.keys(files).length) throw new Error('No text files to send were found in that folder.');
-  if (Array.isArray(tests) && tests.length && !files['.healer.json']) files['.healer.json'] = JSON.stringify({ tests }, null, 2);
+  // 🧪 [2026-11-26, sugerencia de la vigilancia de Healer] Si el proyecto ya tenía .healer.json, los tests pedidos se descartaban en
+  // silencio y Healer corría la suite completa. Ahora se suman a ese archivo (solo en lo que se manda, el del proyecto no cambia).
+  let avisoTests = '';
+  if (Array.isArray(tests) && tests.length) {
+    if (!files['.healer.json']) files['.healer.json'] = JSON.stringify({ tests }, null, 2);
+    else {
+      let config;
+      try { config = JSON.parse(files['.healer.json']); } catch { throw new Error('.healer.json is not valid JSON, so the tests you asked for cannot be added to it. Fix it, or send without tests.'); }
+      files['.healer.json'] = JSON.stringify({ ...config, tests }, null, 2);
+      avisoTests = `For this run, the tests you asked for replace the "tests" of .healer.json${Array.isArray(config.tests) && config.tests.length ? ` (${config.tests.join(', ')})` : ''}; the file in the project is not changed.`;
+    }
+  }
   const appId = `claude-code/${path.basename(raiz).replace(/[^\w.-]/g, '-').slice(0, 60) || 'proyecto'}`;
   // 🔐 [2026-11-16] Sin nivel propio (antes free por defecto): vale la política de la organización (pro salvo que el dueño cambie).
   // Si tocaría free y la organización pide preguntar, Healer responde 409 y no se encola nada.
@@ -56,9 +92,9 @@ async function revisar({ ruta, nivel, tests, confirmar_free, solo_revisar, bug }
     if (e.status === 409) return `Needs the user's confirmation, nothing was queued: ${e.datos?.message}\nIn this tool, "confirm_free" is confirmar_free: true${e.datos?.reason === 'cupo_agotado' ? ', and "review_only" is solo_revisar: true' : ''}.`;
     throw e;
   }
-  fs.mkdirSync(ESTADO, { recursive: true });
-  fs.writeFileSync(archivoDeTrabajo(envio.job_id), JSON.stringify({ raiz, appId, enviado: new Date().toISOString() }));
+  guardarEstado(envio.job_id, { raiz, appId, enviado: new Date().toISOString() });
   return [
+    ...(avisoTests ? [avisoTests] : []),
     `Sent to Healer: job ${envio.job_id} (${envio.ai_level === 'none' ? 'review only, no AI' : `${envio.ai_level} level`}${envio.ai_level_reason ? `, ${({ pedido: 'requested', organizacion: 'organization default', cupo: 'single repairs', confirmado: 'confirmed by the user', auto: 'organization allows free automatically', solo_revisar: 'review only' })[envio.ai_level_reason] || envio.ai_level_reason}` : ''}).`,
     `${Object.keys(files).length} files${Object.keys(binary_files).length ? ` + ${Object.keys(binary_files).length} binary` : ''}, ${Math.round(total / 1024)} KB.${omitidos_lista.length ? ` ${resumenOmitidos(omitidos_lista)}` : ''}`,
     'Healer runs the tests in an isolated sandbox and repairs what fails. It usually takes a few minutes: check with healer_resultado.'
@@ -104,7 +140,10 @@ function informePantalla(r) {
 }
 
 async function resultado({ job_id, esperar_segundos }) {
-  const limite = Date.now() + Math.min(Math.max(Number(esperar_segundos) || 45, 0), 50) * 1000;
+  // ⏱️ [2026-11-26, sugerencia de la vigilancia de Healer] `Number(0) || 45` convertía un 0 pedido en 45 s: no había forma de
+  // consultar sin esperar. Sin valor (o con uno inválido) siguen siendo 45 s.
+  const pedido = esperar_segundos === undefined || esperar_segundos === null || esperar_segundos === '' ? NaN : Number(esperar_segundos);
+  const limite = Date.now() + Math.min(Math.max(Number.isFinite(pedido) ? pedido : 45, 0), 50) * 1000;
   let r;
   for (;;) {
     r = await api('GET', `/v1/repair/${encodeURIComponent(job_id)}`);
@@ -117,10 +156,10 @@ async function resultado({ job_id, esperar_segundos }) {
   if (r.status === 'error') return `Healer could not finish: ${r.error || 'unknown error'}.`;
   if (r.tipo === 'pantalla') return informePantalla(r);
 
-  const meta = fs.existsSync(archivoDeTrabajo(job_id)) ? JSON.parse(fs.readFileSync(archivoDeTrabajo(job_id), 'utf8')) : null;
+  const meta = leerEstado(job_id);
   const cambiados = r.changed_files || [];
   // La propuesta queda guardada para healer_aplicar (y para mirarla con calma).
-  if (meta) fs.writeFileSync(archivoDeTrabajo(job_id), JSON.stringify({ ...meta, terminado: new Date().toISOString(), status: r.status, changed_files: cambiados, base_hashes: r.base_hashes || {}, ...(r.requires_acceptance ? { requires_acceptance: r.requires_acceptance } : {}), files: Object.fromEntries(cambiados.map((c) => [c, r.files?.[c]])) }));
+  if (meta) guardarEstado(job_id, ({ ...meta, terminado: new Date().toISOString(), status: r.status, changed_files: cambiados, base_hashes: r.base_hashes || {}, ...(r.requires_acceptance ? { requires_acceptance: r.requires_acceptance } : {}), files: Object.fromEntries(cambiados.map((c) => [c, r.files?.[c]])) }));
 
   const lineas = [];
   const titulo = r.not_accepted ? `Not accepted: ${r.not_accepted.reason} Healer only reviewed it; nothing was repaired and it does not count as a repair success or failure.` : { production_ready: 'Production ready: every check passes.', unresolved: r.partial_fix ? 'Partial delivery: some failures fixed, some remain.' : 'Unresolved: Healer could not leave every check passing.', unsupported_stack: 'Unsupported stack: no supported language was found to verify.' }[r.status] || r.status;
@@ -235,9 +274,8 @@ function diffDe(antes, despues) {
 }
 
 async function aplicar({ job_id, archivos, acepto_puntaje_menor }) {
-  const archivo = archivoDeTrabajo(job_id);
-  if (!fs.existsSync(archivo)) throw new Error('No proposal stored for that job: call healer_resultado first.');
-  const t = JSON.parse(fs.readFileSync(archivo, 'utf8'));
+  const t = leerEstado(job_id);
+  if (!t) throw new Error('No proposal stored for that job: call healer_resultado first.');
   if (!t.changed_files?.length) return 'That job has no changes to apply.';
   // Solo lo que el usuario aprobó (si mandó "archivos"); un nombre que Healer no cambió frena todo.
   const pedidos = Array.isArray(archivos) && archivos.length ? archivos.map(String) : null;
@@ -258,14 +296,19 @@ async function aplicar({ job_id, archivos, acepto_puntaje_menor }) {
     return t.base_hashes[ruta] && (actual === null || sha256(actual) !== t.base_hashes[ruta]);
   });
   if (distintos.length) return `Not applied: these files changed since they were sent to Healer: ${distintos.join(', ')}. Send the project again with healer_revisar.`;
+  // 🧱 [2026-11-26, sugerencia de la vigilancia de Healer] Todo o nada: antes una ruta fuera del proyecto frenaba a mitad de camino,
+  // con los archivos anteriores ya escritos, y un archivo sin contenido se saltaba pero se informaba como aplicado. Ahora se revisa
+  // todo antes de escribir el primero.
+  const fuera = elegidos.filter((ruta) => !path.resolve(t.raiz, ruta).startsWith(t.raiz + path.sep));
+  if (fuera.length) throw new Error(`Nothing was written: path(s) outside the project: ${fuera.join(', ')}.`);
+  const sinContenido = elegidos.filter((ruta) => typeof t.files?.[ruta] !== 'string');
+  if (sinContenido.length) throw new Error(`Nothing was written: the stored proposal has no content for ${sinContenido.join(', ')}. Call healer_resultado again.`);
   for (const ruta of elegidos) {
     const destino = path.resolve(t.raiz, ruta);
-    if (!destino.startsWith(t.raiz + path.sep)) throw new Error(`Path outside the project: ${ruta}`);
-    if (typeof t.files[ruta] !== 'string') continue;
     fs.mkdirSync(path.dirname(destino), { recursive: true });
     fs.writeFileSync(destino, t.files[ruta]);
   }
-  fs.writeFileSync(archivo, JSON.stringify({ ...t, aplicado: new Date().toISOString(), aplicados: elegidos }));
+  guardarEstado(job_id, { ...t, aplicado: new Date().toISOString(), aplicados: elegidos });
   const descartados = t.changed_files.filter((c) => !elegidos.includes(c));
   // Le cuenta a Healer qué se aplicó y qué no (solo para medir qué cambios valen la pena; si falla, no importa).
   await api('POST', `/v1/repair/${encodeURIComponent(job_id)}/decision`, { aplicados: elegidos, descartados, via: 'plugin_local' }).catch(() => {});
