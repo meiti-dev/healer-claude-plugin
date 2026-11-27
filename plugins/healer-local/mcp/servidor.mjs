@@ -16,7 +16,7 @@ import readline from 'node:readline';
 import { archivosDelProyecto, resumenOmitidos } from './proyecto.mjs';
 import { revisarLocal, textoLocal, revisarCompleto, instalarHook, quitarHook, estadoHook } from '../check.mjs';
 
-const VERSION = '0.8.2';
+const VERSION = '0.8.3';
 const API = (process.env.HEALER_API_URL || 'https://healer-api.meiti.dev').replace(/\/$/, '');
 const leerClave = () => String(process.env.CLAUDE_PLUGIN_OPTION_API_KEY || '').trim();
 // 🔒 [2026-11-26, sugerencia de la vigilancia de Healer] El estado de cada trabajo (la carpeta del proyecto y lo propuesto) decide dónde
@@ -193,7 +193,7 @@ async function resultado({ job_id, esperar_segundos }) {
   const pr = r.pentagono_report;
   if (pr?.puntaje != null) {
     lineas.push(`Quality score (Pentagon): ${pr.puntaje}/100${pr.critico ? ' (needs attention)' : ''}.${pr.desglose ? ' Where the points went:' : ''}`);
-    const nombres = { quality: 'Code quality', dead_code: 'Dead code', dependencies: 'Dependencies (known vulnerabilities)' };
+    const nombres = { quality: 'Code quality', dead_code: 'Dead code', dependencies: 'Dependencies (known vulnerabilities)', healer_rules: 'Healer rules (bugs we have seen in real apps)' };
     for (const p of pr.desglose || []) {
       const sev = Object.entries(p.by_severity || {}).map(([s, n]) => `${n} ${s}`).join(', ');
       lineas.push(`- ${nombres[p.parte] || p.parte} (${(p.tools || []).join(', ')}): -${p.deducted} of max ${p.cap}${p.at_cap ? ' (at its cap)' : ''}; ${p.findings ? `${p.findings} finding(s): ${sev}` : 'no findings'}.`);
@@ -207,6 +207,19 @@ async function resultado({ job_id, esperar_segundos }) {
     lineas.push(`Non-blocking suggestions (not applied): ${sug.length}.`);
     for (const s of sug.slice(0, 10)) lineas.push(`- ${s.archivo}: ${String(s.diagnostico).slice(0, 300)}`);
     if (sug.length > 10) lineas.push(`- ... and ${sug.length - 10} more (all of them are in the Healer panel).`);
+  }
+  // 🩹 [BUG REAL 2026-11-26, hukkin/tomli por repository_url] Sin copias por archivo, el arreglo viene como UN parche (diff): antes
+  // decía "No file changes to apply" aunque hubiera arreglos (igual que el conector remoto).
+  if (!cambiados.length && typeof r.diff === 'string' && r.diff.trim()) {
+    const archivos = [...new Set(r.diff.split('\n').filter((l) => l.startsWith('+++ b/')).map((l) => l.slice(6).trim()))];
+    lineas.push(`Proposed changes in ${archivos.length || 'some'} file(s), as one patch against the repository at the commit that was sent (the job came by repository_url, so there are no per-file copies). What each one fixes:`);
+    for (const ruta of archivos) {
+      const motivos = (r.history || []).filter((h) => h?.file === ruta).map((h) => String(h.error || '').replace(/\s+/g, ' ').slice(0, 200)).filter(Boolean);
+      lineas.push(`- ${ruta}${motivos.length ? `\n    ${motivos.map((m) => `· ${m}`).join('\n    ')}` : ''}`);
+    }
+    lineas.push('Nothing has been written. Show the patch to the user and apply only if they say yes: save it as healer.patch in the repository checked out at that commit, then run git apply --check healer.patch and git apply healer.patch, one at a time, and delete healer.patch.');
+    lineas.push(r.diff.slice(0, 30000));
+    return lineas.join('\n');
   }
   if (!cambiados.length) {
     lineas.push('No file changes to apply.');
