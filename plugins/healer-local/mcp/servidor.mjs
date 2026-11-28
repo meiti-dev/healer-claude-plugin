@@ -16,7 +16,7 @@ import readline from 'node:readline';
 import { archivosDelProyecto, resumenOmitidos } from './proyecto.mjs';
 import { revisarLocal, textoLocal, revisarCompleto, instalarHook, quitarHook, estadoHook } from '../check.mjs';
 
-const VERSION = '0.8.3';
+const VERSION = '0.8.4';
 const API = (process.env.HEALER_API_URL || 'https://healer-api.meiti.dev').replace(/\/$/, '');
 const leerClave = () => String(process.env.CLAUDE_PLUGIN_OPTION_API_KEY || '').trim();
 // 🔒 [2026-11-26, sugerencia de la vigilancia de Healer] El estado de cada trabajo (la carpeta del proyecto y lo propuesto) decide dónde
@@ -207,6 +207,16 @@ async function resultado({ job_id, esperar_segundos }) {
     lineas.push(`Non-blocking suggestions (not applied): ${sug.length}.`);
     for (const s of sug.slice(0, 10)) lineas.push(`- ${s.archivo}: ${String(s.diagnostico).slice(0, 300)}`);
     if (sug.length > 10) lineas.push(`- ... and ${sug.length - 10} more (all of them are in the Healer panel).`);
+  }
+  // 🖼️ [2026-11-27] La prueba de render (nunca peor visual), igual que el conector remoto (src/render/recorrido.ts, lineasRender).
+  const v = r.visual_report;
+  if (v) {
+    const veredicto = { peor: 'WORSE than the original', igual: 'the same as the original', mejor: 'better than the original', sin_datos: 'no data' }[v.veredicto] || v.veredicto;
+    const como = v.automatic ? `it ran by itself because this is a web app${v.start ? `, started with "${v.start.command}" (${v.start.detail})` : ''}` : 'requested';
+    lineas.push(`Render check (${como}): ${veredicto} on ${v.pantallas} screen(s)${v.ms ? `, ${Math.max(1, Math.round(v.ms / 1000))} s` : ''}. ${v.resumen || ''}`.trim());
+    if (v.veredicto === 'peor') lineas.push('Tell the user before applying: the repaired version shows these screens worse than the original.');
+    for (const g of (v.regresiones || []).slice(0, 8)) lineas.push(`- [${g.tipo}] ${g.pantalla}: ${g.detalle}`);
+    if ((v.regresiones || []).length > 8) lineas.push(`- ... and ${v.regresiones.length - 8} more (all of them are in the Healer panel).`);
   }
   // 🩹 [BUG REAL 2026-11-26, hukkin/tomli por repository_url] Sin copias por archivo, el arreglo viene como UN parche (diff): antes
   // decía "No file changes to apply" aunque hubiera arreglos (igual que el conector remoto).
